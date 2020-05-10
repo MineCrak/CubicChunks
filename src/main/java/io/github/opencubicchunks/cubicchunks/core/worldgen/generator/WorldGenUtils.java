@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -37,12 +38,24 @@ import javax.annotation.ParametersAreNonnullByDefault;
 @MethodsReturnNonnullByDefault
 public class WorldGenUtils {
 
-    public static IBlockState getRandomBedrockReplacement(World world, Random rand, IBlockState state, int blockY, int medrockLevels) {
-        int heightAboveBottom = blockY - ((IMinMaxHeight) world).getMinHeight();
-        if (heightAboveBottom < 5) {
-            int bedrockChance = Math.max(1, heightAboveBottom + 1);
-            if (rand.nextInt(bedrockChance) == 0) {
-                return Blocks.BEDROCK.getDefaultState();
+    public static IBlockState getRandomBedrockReplacement(World world, Random rand, IBlockState state, int blockY,
+            int bedrockLevels, boolean topBedrock, boolean bottomBedrock) {
+        if (bottomBedrock) {
+            int heightAboveBottom = blockY - ((IMinMaxHeight) world).getMinHeight();
+            if (heightAboveBottom < bedrockLevels) {
+                int bedrockChance = Math.max(1, heightAboveBottom + 1);
+                if (rand.nextInt(bedrockChance) == 0) {
+                    return Blocks.BEDROCK.getDefaultState();
+                }
+            }
+        }
+        if (topBedrock) {
+            int heightBelowTop =  ((IMinMaxHeight) world).getMaxHeight() - blockY - 1;
+            if (heightBelowTop < bedrockLevels) {
+                int bedrockChance = Math.max(1, heightBelowTop + 1);
+                if (rand.nextInt(bedrockChance) == 0) {
+                    return Blocks.BEDROCK.getDefaultState();
+                }
             }
         }
         return state;

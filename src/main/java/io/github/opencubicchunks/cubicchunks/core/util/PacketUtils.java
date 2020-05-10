@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -64,6 +65,9 @@ public class PacketUtils {
      * Writes signed int with variable length encoding, using at most 5 bytes.
      *
      * Unlike vanilla/forge one, this ensures that value and ~value are written using the same amount of bytes
+     *
+     * @param buf byte buffer
+     * @param i integer to write
      */
     public static void writeSignedVarInt(ByteBuf buf, int i) {
         int signBit = (i >>> 31) << 6;
@@ -80,6 +84,8 @@ public class PacketUtils {
      * Reads signed int with variable length encoding, using at most 5 bytes.
      *
      * @see PacketUtils#writeSignedVarInt(ByteBuf, int)
+     * @param buf byte buffer
+     * @return read integer
      */
     public static int readSignedVarInt(ByteBuf buf) {
         int val = 0;
@@ -101,14 +107,5 @@ public class PacketUtils {
 
     private static void writeVarIntByte(ByteBuf buf, int i, boolean hasMore) {
         buf.writeByte(i | (hasMore ? 0x80 : 0));
-    }
-
-    public static <T extends IMessage> void ensureMainThread(AbstractClientMessageHandler<T> handler,
-            EntityPlayer player, T message, MessageContext ctx) {
-        IThreadListener taskQueue = Minecraft.getMinecraft();
-        if (!taskQueue.isCallingFromMinecraftThread()) {
-            taskQueue.addScheduledTask(() -> handler.handleClientMessage(player, message, ctx));
-            throw ThreadQuickExitException.INSTANCE;
-        }
     }
 }

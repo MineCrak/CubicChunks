@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -33,28 +34,28 @@ import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Multimaps;
+import gnu.trove.map.TIntObjectMap;
+import gnu.trove.map.hash.TIntObjectHashMap;
+import io.github.opencubicchunks.cubicchunks.api.util.CubePos;
+import io.github.opencubicchunks.cubicchunks.api.util.XYZMap;
+import io.github.opencubicchunks.cubicchunks.api.util.XZMap;
+import io.github.opencubicchunks.cubicchunks.api.world.CubeWatchEvent;
+import io.github.opencubicchunks.cubicchunks.api.world.IColumn;
+import io.github.opencubicchunks.cubicchunks.api.world.ICube;
+import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
 import io.github.opencubicchunks.cubicchunks.core.CubicChunksConfig;
+import io.github.opencubicchunks.cubicchunks.core.asm.mixin.ICubicWorldInternal;
+import io.github.opencubicchunks.cubicchunks.core.entity.ICubicEntityTracker;
 import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
 import io.github.opencubicchunks.cubicchunks.core.network.PacketCubes;
 import io.github.opencubicchunks.cubicchunks.core.network.PacketDispatcher;
 import io.github.opencubicchunks.cubicchunks.core.util.WatchersSortingList;
 import io.github.opencubicchunks.cubicchunks.core.visibility.CubeSelector;
 import io.github.opencubicchunks.cubicchunks.core.visibility.CuboidalCubeSelector;
-import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
-import io.github.opencubicchunks.cubicchunks.core.entity.CubicEntityTracker;
-import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
-import io.github.opencubicchunks.cubicchunks.core.network.PacketCubes;
-import io.github.opencubicchunks.cubicchunks.core.network.PacketDispatcher;
-import io.github.opencubicchunks.cubicchunks.api.util.CubePos;
-import io.github.opencubicchunks.cubicchunks.api.util.XYZMap;
-import io.github.opencubicchunks.cubicchunks.api.util.XZMap;
-import io.github.opencubicchunks.cubicchunks.core.visibility.CubeSelector;
-import io.github.opencubicchunks.cubicchunks.core.visibility.CuboidalCubeSelector;
-import io.github.opencubicchunks.cubicchunks.api.world.IColumn;
-import io.github.opencubicchunks.cubicchunks.core.asm.mixin.ICubicWorldInternal;
 import io.github.opencubicchunks.cubicchunks.core.world.cube.Cube;
-import gnu.trove.map.TIntObjectMap;
-import gnu.trove.map.hash.TIntObjectHashMap;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
+import it.unimi.dsi.fastutil.objects.ObjectSet;
 import mcp.MethodsReturnNonnullByDefault;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.server.management.PlayerChunkMap;
@@ -66,14 +67,16 @@ import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraftforge.common.ForgeChunkManager;
 import net.minecraftforge.common.ForgeChunkManager.Ticket;
+import net.minecraftforge.common.MinecraftForge;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
@@ -203,22 +206,29 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
     // (player respawn packet?)
     private Set<EntityPlayerMP> pendingPlayerAdd = new HashSet<>();
 
+    private final TickableChunkContainer tickableChunksCubesToReturn = new TickableChunkContainer();
+
+    // see comment in updateMovingPlayer() for explnation why it's in this class
+    private final ChunkGc chunkGc;
+
     public PlayerCubeMap(WorldServer worldServer) {
-        super((WorldServer) worldServer);
+        super(worldServer);
         this.cubeCache = ((ICubicWorldInternal.Server) worldServer).getCubeCache();
         this.setPlayerViewDistance(worldServer.getMinecraftServer().getPlayerList().getViewDistance(),
                 ((ICubicPlayerList) worldServer.getMinecraftServer().getPlayerList()).getVerticalViewDistance());
         ((ICubicWorldInternal) worldServer).getLightingManager().registerHeightChangeListener(this);
+        this.chunkGc = new ChunkGc(((ICubicWorldInternal.Server) worldServer).getCubeCache());
     }
 
     /**
      * This method exists only because vanilla needs it. It shouldn't be used anywhere else.
      */
-    // CHECKED: 1.10.2-12.18.1.2092
     @Override
     @Deprecated // Warning: Hacks! For vanilla use only! (WorldServer.updateBlocks())
     public Iterator<Chunk> getChunkIterator() {
-        // GIVE TICKET SYSTEM FULL CONTROL
+        // CubicChunks.bigWarning("Usage of PlayerCubeMap#getChunkIterator detected in a cubic chunks world! "
+        //        + "This is likely to work incorrectly. This is not supported.");
+        // TODO: throw UnsupportedOperationException?
         Iterator<Chunk> chunkIt = this.cubeCache.getLoadedChunks().iterator();
         return new AbstractIterator<Chunk>() {
             @Override protected Chunk computeNext() {
@@ -231,6 +241,46 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
                 return this.endOfData();
             }
         };
+    }
+
+    public TickableChunkContainer getTickableChunks() {
+        TickableChunkContainer tickableChunksCubes = this.tickableChunksCubesToReturn;
+        tickableChunksCubes.clear();
+        addTickableColumns(tickableChunksCubes);
+        addTickableCubes(tickableChunksCubes);
+        addForcedColumns(tickableChunksCubes);
+        addForcedCubes(tickableChunksCubes);
+        return tickableChunksCubes;
+    }
+
+    private void addForcedColumns(TickableChunkContainer tickableChunksCubes) {
+        for(IColumn columns : ((ICubicWorldInternal.Server) getWorldServer()).getForcedColumns()) {
+            tickableChunksCubes.addColumn((Chunk) columns);
+        }
+    }
+
+    private void addForcedCubes(TickableChunkContainer tickableChunksCubes) {
+        tickableChunksCubes.forcedCubes = ((ICubicWorldInternal.Server) getWorldServer()).getForcedCubes();
+    }
+
+    private void addTickableCubes(TickableChunkContainer tickableChunksCubes) {
+        for (CubeWatcher watcher : cubeWatchers) {
+            ICube cube = watcher.getCube();
+            if (cube == null || !watcher.hasPlayerMatchingInRange(NOT_SPECTATOR, 128)) {
+                continue;
+            }
+            tickableChunksCubes.addCube(cube);
+        }
+    }
+
+    private void addTickableColumns(TickableChunkContainer tickableChunksCubes) {
+        for (ColumnWatcher watcher : columnWatchers) {
+            Chunk chunk = watcher.getChunk();
+            if (chunk == null || !watcher.hasPlayerMatchingInRange(128.0D, NOT_SPECTATOR)) {
+                continue;
+            }
+            tickableChunksCubes.addColumn(chunk);
+        }
     }
 
     /**
@@ -293,7 +343,6 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
             while (iter.hasNext()) {
                 ColumnWatcher entry = iter.next();
 
-                getWorldServer().profiler.startSection("column[" + entry.getPos().x + "," + entry.getPos().z + "]");
                 boolean success = entry.getChunk() != null;
                 if (!success) {
                     boolean canGenerate = entry.hasPlayerMatching(CAN_GENERATE_CHUNKS);
@@ -309,8 +358,6 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
                         this.columnsToSendToClients.remove(entry);
                     }
                 }
-
-                getWorldServer().profiler.endSection(); // column[x,z]
             }
 
             getWorldServer().profiler.endSection(); // columns
@@ -324,10 +371,6 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
 
             while (iterator.hasNext() && chunksToGenerate >= 0 && System.nanoTime() < stopTime) {
                 CubeWatcher watcher = iterator.next();
-                CubePos pos = watcher.getCubePos();
-
-                getWorldServer().profiler.startSection("chunk=" + pos);
-
                 boolean success = watcher.getCube() != null && watcher.getCube().isFullyPopulated() && watcher.getCube().isInitialLightingDone() &&
                         !watcher.getCube().hasLightUpdates();
                 if (!success) {
@@ -347,8 +390,6 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
 
                     --chunksToGenerate;
                 }
-
-                getWorldServer().profiler.endSection();//chunk[x, y, z]
             }
 
             getWorldServer().profiler.endSection(); // chunks
@@ -397,8 +438,10 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
             PacketDispatcher.sendTo(packet, player);
             //Sending entities per cube.
             for (Cube cube : cubes) {
-                ((CubicEntityTracker) getWorldServer().getEntityTracker())
-                        .sendLeashedEntitiesInCube(player, cube);
+                ((ICubicEntityTracker) getWorldServer().getEntityTracker()).sendLeashedEntitiesInCube(player, cube);
+                CubeWatcher watcher = getCubeWatcher(cube.getCoords());
+                assert watcher != null;
+                MinecraftForge.EVENT_BUS.post(new CubeWatchEvent(cube, cube.getCoords(), watcher, player));
             }
         }
         cubesToSend.clear();
@@ -536,6 +579,8 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
         // so we need to use managerPosition there
         CubePos playerCubePos = CubePos.fromEntityCoords(player.managedPosX, playerWrapper.managedPosY, player.managedPosZ);
 
+        // send unload columns later so that they get unloaded after their corresponding cubes
+        ObjectSet<ColumnWatcher> toSendUnload = new ObjectOpenHashSet<>((horizontalViewDistance*2+1) * (horizontalViewDistance*2+1) * 6);
         this.cubeSelector.forAllVisibleFrom(playerCubePos, horizontalViewDistance, verticalViewDistance, (cubePos) -> {
 
             // get the watcher
@@ -551,10 +596,11 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
                 return;
             }
 
-            if (columnWatcher.containsPlayer(player)) {
-                columnWatcher.removePlayer(player);
-            }
+            toSendUnload.add(columnWatcher);
         });
+        toSendUnload.stream()
+                .filter(watcher->watcher.containsPlayer(player))
+                .forEach(watcher->watcher.removePlayer(player));
         this.players.remove(player.getEntityId());
         this.setNeedSort();
     }
@@ -581,6 +627,21 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
         this.updatePlayer(playerWrapper, playerWrapper.getManagedCubePos(), CubePos.fromEntity(player));
         playerWrapper.updateManagedPos();
         this.setNeedSort();
+
+        // With ChunkGc being separate from PlayerCubeMap, there are 2 issues:
+        // Problem 0: Sometimes, a chunk can be generated after CubeWatcher's chunk load callback returns with a null
+        // but before ChunkGC call. This means that the cube will get unloaded, even when ChunkWatcher is waiting for it.
+        // Problem 1: When chunkGc call is not in this method, sometimes, when a player teleports far away and is
+        // unlucky, and ChunkGc runs in the same tick the teleport appears to happen after PlayerCubeMap call, but
+        // before ChunkGc call. This means that PlayerCubeMap won't yet have a CubeWatcher for the player cubes at all,
+        // so even directly checking for CubeWatchers before unload attempt won't work.
+        //
+        // While normally not an issue as it will be reloaded soon anyway, it breaks a lot of things if that cube
+        // contains the player. Which is not unlikely if the player is what caused generating this cube in the first place
+        // for problem #0.
+        // So we put ChunkGc here so that we can be sure it has consistent data about player location, and that no chunks are
+        // loaded while we aren't looking.
+        this.chunkGc.tick();
     }
 
     private void updatePlayer(PlayerWrapper entry, CubePos oldPos, CubePos newPos) {
@@ -658,8 +719,9 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
         if (this.players == null) {
             return;
         }
-        newHorizontalViewDistance = clamp(newHorizontalViewDistance, 3, 32);
-        newVerticalViewDistance = clamp(newVerticalViewDistance, 3, 32);
+
+        newHorizontalViewDistance = clamp(newHorizontalViewDistance, 3, CubicChunks.hasOptifine() ? 64 : 32);
+        newVerticalViewDistance = clamp(newVerticalViewDistance, 3, CubicChunks.hasOptifine() ? 64 : 32);
 
         if (newHorizontalViewDistance == this.horizontalViewDistance && newVerticalViewDistance == this.verticalViewDistance) {
             return;
@@ -754,7 +816,8 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
     void removeEntry(CubeWatcher cubeWatcher) {
         CubePos cubePos = cubeWatcher.getCubePos();
         cubeWatcher.updateInhabitedTime();
-        this.cubeWatchers.remove(cubePos.getX(), cubePos.getY(), cubePos.getZ());
+        CubeWatcher removed = this.cubeWatchers.remove(cubePos.getX(), cubePos.getY(), cubePos.getZ());
+        assert removed == cubeWatcher : "Removed unexpected cube watcher";
         this.cubeWatchersToUpdate.remove(cubeWatcher);
         this.cubesToGenerate.remove(cubeWatcher);
         this.cubesToSendToClients.remove(cubeWatcher);
@@ -775,6 +838,10 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
 
     public void scheduleSendCubeToPlayer(Cube cube, EntityPlayerMP player) {
         cubesToSend.put(player, cube);
+    }
+
+    public void removeSchedulesSendCubeToPlayer(Cube cube, EntityPlayerMP player) {
+        cubesToSend.remove(player, cube);
     }
 
     @Nullable public CubeWatcher getCubeWatcher(CubePos pos) {
@@ -833,7 +900,8 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
      * Return iterator over 'CubeWatchers' of all cubes loaded
      * by players. Iterator first element defined by seed.
      * 
-     * @param seed
+     * @param seed seed for random iterator
+     * @return cube watcher iterator
      */
     public Iterator<CubeWatcher> getRandomWrappedCubeWatcherIterator(int seed) {
         return this.cubeWatchers.randomWrappedIterator(seed);
@@ -844,11 +912,11 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
         final Iterator<CubeWatcher> iterator = this.cubeWatchers.iterator();
         ImmutableSetMultimap<ChunkPos, Ticket> persistentChunksFor = ForgeChunkManager.getPersistentChunksFor(world);
         world.profiler.startSection("forcedChunkLoading");
+        @SuppressWarnings("unchecked")
         final Iterator<Cube> persistentCubesIterator = persistentChunksFor.keys().stream()
                 .filter(Objects::nonNull)
-                .map(input -> (Collection<Cube>) ((IColumn) world.getChunkFromChunkCoords(input.x, input.z)).getLoadedCubes())
-                .collect(ArrayList<Cube>::new, (list, cubeCollection) -> ((ArrayList<Cube>) list).addAll(cubeCollection),
-                        (list, cubeList) -> ((ArrayList<Cube>) list).addAll(cubeList))
+                .map(input -> (Collection<Cube>) ((IColumn) world.getChunk(input.x, input.z)).getLoadedCubes())
+                .collect(ArrayList<Cube>::new, ArrayList::addAll, ArrayList::addAll)
                 .iterator();
         world.profiler.endSection();
         
@@ -884,5 +952,37 @@ public class PlayerCubeMap extends PlayerChunkMap implements LightingManager.IHe
                 return this.endOfData();
             }
         };
+    }
+
+    public class TickableChunkContainer {
+
+        private final ObjectArrayList<ICube> cubes = ObjectArrayList.wrap(new ICube[64*1024]);
+        private XYZMap<ICube> forcedCubes;
+        private final Set<Chunk> columns = Collections.newSetFromMap(new IdentityHashMap<>());
+
+        private void clear() {
+            this.cubes.clear();
+            this.columns.clear();
+        }
+
+        private void addCube(ICube cube) {
+            cubes.add(cube);
+        }
+
+        public void addColumn(Chunk column) {
+            columns.add(column);
+        }
+
+        public Iterable<ICube> forcedCubes() {
+            return forcedCubes;
+        }
+
+        public ICube[] playerTickableCubes() {
+            return cubes.elements();
+        }
+
+        public Iterable<Chunk> columns() {
+            return columns;
+        }
     }
 }

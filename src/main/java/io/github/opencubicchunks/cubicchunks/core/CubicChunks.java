@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -23,22 +24,33 @@
  */
 package io.github.opencubicchunks.cubicchunks.core;
 
+import static io.github.opencubicchunks.cubicchunks.core.util.ReflectionUtil.cast;
+
+import io.github.opencubicchunks.cubicchunks.api.worldgen.VanillaCompatibilityGeneratorProviderBase;
+import io.github.opencubicchunks.cubicchunks.core.asm.mixin.ICubicWorldSettings;
+import io.github.opencubicchunks.cubicchunks.core.asm.mixin.core.common.IIntegratedServer;
+import io.github.opencubicchunks.cubicchunks.core.client.ClientEventHandler;
 import io.github.opencubicchunks.cubicchunks.core.network.PacketDispatcher;
-import io.github.opencubicchunks.cubicchunks.core.proxy.CommonProxy;
+import io.github.opencubicchunks.cubicchunks.core.util.CompatHandler;
+import io.github.opencubicchunks.cubicchunks.core.util.SideUtils;
 import io.github.opencubicchunks.cubicchunks.core.world.type.VanillaCubicWorldType;
-import io.github.opencubicchunks.cubicchunks.api.worldgen.CubeGeneratorsRegistry;
+import io.github.opencubicchunks.cubicchunks.core.worldgen.WorldgenHangWatchdog;
+import io.github.opencubicchunks.cubicchunks.core.worldgen.generator.vanilla.VanillaCompatibilityGenerator;
 import mcp.MethodsReturnNonnullByDefault;
-import net.minecraft.util.ResourceLocation;
-import net.minecraft.util.datafix.DataFixer;
-import net.minecraft.util.datafix.FixTypes;
-import net.minecraft.world.WorldType;
+import net.minecraft.world.World;
+import net.minecraft.world.gen.IChunkGenerator;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.RegistryEvent;
+import net.minecraftforge.fml.client.FMLClientHandler;
 import net.minecraftforge.fml.common.FMLCommonHandler;
+import net.minecraftforge.fml.common.ICrashCallable;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.Mod.EventHandler;
-import net.minecraftforge.fml.common.SidedProxy;
 import net.minecraftforge.fml.common.event.FMLInitializationEvent;
+import net.minecraftforge.fml.common.event.FMLPostInitializationEvent;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 import net.minecraftforge.fml.common.event.FMLServerAboutToStartEvent;
+import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.network.NetworkCheckHandler;
 import net.minecraftforge.fml.common.versioning.ArtifactVersion;
 import net.minecraftforge.fml.common.versioning.DefaultArtifactVersion;
@@ -60,63 +72,100 @@ import javax.annotation.ParametersAreNonnullByDefault;
 @Mod(modid = CubicChunks.MODID,
         name = "CubicChunks",
         version = CubicChunks.VERSION,
-        //@formatter:off
-        // The dependency placeholder comment will be replaced by gradle with full deps list, do not alter it
-        dependencies = "after:forge@[14.23.0.2487,]"/*@@DEPS_PLACEHOLDER@@*/)
-        //@formatter:on
+        dependencies = "after:forge@[14.23.3.2691,]")
 @Mod.EventBusSubscriber
 public class CubicChunks {
-
-    public static final int FIXER_VERSION = 0;
 
     public static final VersionRange SUPPORTED_SERVER_VERSIONS;
     public static final VersionRange SUPPORTED_CLIENT_VERSIONS;
 
     static {
         try {
-            // currently no known unsupported version. Versions newer than current will be only checked on the other side
+            // Versions newer than current will be only checked on the other side
             // (I know this can be hard to actually fully understand)
-            SUPPORTED_SERVER_VERSIONS = VersionRange.createFromVersionSpec("*");
-            SUPPORTED_CLIENT_VERSIONS = VersionRange.createFromVersionSpec("*");
+            SUPPORTED_SERVER_VERSIONS = VersionRange.createFromVersionSpec("[1.12.2-0.0.887.0,)");
+            SUPPORTED_CLIENT_VERSIONS = VersionRange.createFromVersionSpec("[1.12.2-0.0.887.0,)");
         } catch (InvalidVersionSpecificationException e) {
             throw new Error(e);
         }
     }
 
-    public static final int MIN_BLOCK_Y = Integer.MIN_VALUE >> 1;
-    public static final int MAX_BLOCK_Y = Integer.MAX_VALUE >> 1;
+    public static final int MIN_SUPPORTED_BLOCK_Y = Integer.MIN_VALUE + 4096;
+    public static final int MAX_SUPPORTED_BLOCK_Y = Integer.MAX_VALUE - 4095;
 
     public static final boolean DEBUG_ENABLED = System.getProperty("cubicchunks.debug", "false").equalsIgnoreCase("true");
     public static final String MODID = "cubicchunks";
-    public static final String VERSION = "@@VERSION@@";
+    public static final String VERSION = "9999.9999.9999.9999"; // replaced by ForgeGradle
 
     @Nonnull
     public static Logger LOGGER = LogManager.getLogger("EarlyCubicChunks");//use some logger even before it's set. useful for unit tests
-
-    @SidedProxy(clientSide = "io.github.opencubicchunks.cubicchunks.core.proxy.ClientProxy", serverSide = "io.github.opencubicchunks.cubicchunks.core.proxy.ServerProxy")
-    public static CommonProxy proxy;
 
     @EventHandler
     public void preInit(FMLPreInitializationEvent e) {
         LOGGER = e.getModLog();
 
+        FMLCommonHandler.instance().registerCrashCallable(new ICrashCallable() {
+            @Override public String getLabel() {
+                return "CubicChunks WorldGen Hang Watchdog samples";
+            }
+
+            @Override public String call() throws Exception {
+                String message = WorldgenHangWatchdog.getCrashInfo();
+                if (message == null) {
+                    return "(no data)";
+                }
+                return message;
+            }
+        });
         VanillaCubicWorldType.create();
         LOGGER.debug("Registered world types");
     }
 
     @EventHandler
-    public void init(FMLInitializationEvent event) throws IllegalArgumentException, IllegalAccessException, NoSuchFieldException, SecurityException {
-        proxy.init();
-
+    public void init(FMLInitializationEvent event) {
+        MinecraftForge.EVENT_BUS.register(new CommonEventHandler());
+        SideUtils.runForClient(() -> () -> MinecraftForge.EVENT_BUS.register(new ClientEventHandler()));
         PacketDispatcher.registerPackets();
-        CubeGeneratorsRegistry.computeSortedGeneratorList();
+    }
+
+    @EventHandler
+    public void postInit(FMLPostInitializationEvent event) {
+        CompatHandler.init();
     }
 
     @EventHandler
     public void onServerAboutToStart(FMLServerAboutToStartEvent event) {
-        proxy.setBuildLimit(event.getServer());
+        SideUtils.runForSide(
+                () -> () -> {
+                    IIntegratedServer integratedServer = cast(event.getServer());
+                    ICubicWorldSettings settings = cast(integratedServer.getWorldSettings());
+                    if (settings.isCubic()) {
+                        event.getServer().setBuildLimit(CubicChunks.MAX_SUPPORTED_BLOCK_Y);
+                    }
+                },
+                () -> () -> {
+                    // no-op, done by mixin
+                }
+        );
     }
+    
+    @SubscribeEvent
+    public static void registerRegistries(RegistryEvent.NewRegistry evt) {
+        VanillaCompatibilityGeneratorProviderBase.init();
+    }
+    
+    @SubscribeEvent
+    public static void registerVanillaCompatibilityGeneratorProvider(RegistryEvent.Register<VanillaCompatibilityGeneratorProviderBase> event) {
+        event.getRegistry().register(new VanillaCompatibilityGeneratorProviderBase() {
 
+            @Override
+            public VanillaCompatibilityGenerator provideGenerator(IChunkGenerator vanillaChunkGenerator, World world) {
+                return new VanillaCompatibilityGenerator(vanillaChunkGenerator, world);
+            }
+        }.setRegistryName(VanillaCompatibilityGeneratorProviderBase.DEFAULT)
+                .setUnlocalizedName("cubicchunks.gui.worldmenu.cc_default"));
+    }
+    
     @NetworkCheckHandler
     public static boolean checkCanConnectWithMods(Map<String, String> modVersions, Side remoteSide) {
         String remoteFullVersion = modVersions.get(MODID);
@@ -169,10 +218,6 @@ public class CubicChunks {
         return true;
     }
 
-    public static ResourceLocation location(String location) {
-        return new ResourceLocation(MODID, location);
-    }
-
     // essentially a copy of FMLLog.bigWarning, with more lines of stacktrace
     public static void bigWarning(String format, Object... data)
     {
@@ -184,5 +229,12 @@ public class CubicChunks {
             LOGGER.log(Level.WARN, "*  at {}{}", trace[i].toString(), i == 9 ? "..." : "");
         }
         LOGGER.log(Level.WARN, "****************************************");
+    }
+
+    public static boolean hasOptifine() {
+        return SideUtils.getForSide(
+                () -> () -> FMLClientHandler.instance().hasOptifine(),
+                () -> () -> false
+        );
     }
 }

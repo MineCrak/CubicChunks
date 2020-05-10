@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -23,17 +24,16 @@
  */
 package io.github.opencubicchunks.cubicchunks.core.asm.mixin.core.client;
 
-import io.github.opencubicchunks.cubicchunks.core.util.ClassInheritanceMultiMapFactory;
+import io.github.opencubicchunks.cubicchunks.core.world.EntityContainer;
 import io.github.opencubicchunks.cubicchunks.core.world.cube.BlankCube;
 import io.github.opencubicchunks.cubicchunks.api.world.ICube;
-import io.github.opencubicchunks.cubicchunks.core.util.ClassInheritanceMultiMapFactory;
 import io.github.opencubicchunks.cubicchunks.api.util.Coords;
 import io.github.opencubicchunks.cubicchunks.api.world.ICubicWorld;
 import io.github.opencubicchunks.cubicchunks.api.world.IColumn;
-import io.github.opencubicchunks.cubicchunks.core.world.cube.BlankCube;
 import mcp.MethodsReturnNonnullByDefault;
 import net.minecraft.client.renderer.RenderGlobal;
 import net.minecraft.client.renderer.ViewFrustum;
+import net.minecraft.client.renderer.chunk.RenderChunk;
 import net.minecraft.client.renderer.culling.ICamera;
 import net.minecraft.entity.Entity;
 import net.minecraft.util.ClassInheritanceMultiMap;
@@ -42,6 +42,7 @@ import net.minecraft.world.chunk.Chunk;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Constant;
 import org.spongepowered.asm.mixin.injection.Group;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -74,31 +75,31 @@ public class MixinRenderGlobal {
 
     @Shadow private ViewFrustum viewFrustum;
 
-    /**
+    /*
      * This allows to get the Y position of rendered entity by injecting itself directly before call to
      * chunk.getEntityLists
      */
     @Group(name = "renderEntitiesFix")//, min = 3, max = 3)
     @Inject(method = "renderEntities",
             at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/client/multiplayer/WorldClient;getChunkFromBlockCoords(Lnet/minecraft/util/math/BlockPos;)"
-                            + "Lnet/minecraft/world/chunk/Chunk;"),
+                    target = "Lnet/minecraft/client/multiplayer/WorldClient;getChunk(Lnet/minecraft/util/math/BlockPos;)Lnet/minecraft/world/chunk/Chunk;"),
             locals = LocalCapture.CAPTURE_FAILHARD)
     public void onGetPosition(Entity renderViewEntity, ICamera camera, float partialTicks,
             CallbackInfo ci, int pass, double d0, double d1, double d2,
             Entity entity, double d3, double d4, double d5,
             List<Entity> list, List<Entity> list1, List<Entity> list2,
-            BlockPos.PooledMutableBlockPos pos, Iterator<RenderGlobal.ContainerLocalRenderInformation> var21,
-            RenderGlobal.ContainerLocalRenderInformation info) {
-        ICubicWorld world = (ICubicWorld) info.renderChunk.getWorld();
+            BlockPos.PooledMutableBlockPos pos, Iterator<?> var21,
+            /*RenderGlobal.ContainerLocalRenderInformation*/ @Coerce Object info) {
+        RenderChunk renderChunk = ((IContainerLocalRenderInformation) info).getRenderChunk();
+        ICubicWorld world = (ICubicWorld) renderChunk.getWorld();
         if (world.isCubicWorld()) {
-            this.position = info.renderChunk.getPosition();
+            this.position = renderChunk.getPosition();
         } else {
             this.position = null;
         }
     }
 
-    /**
+    /*
      * After chunk.getEntityLists() renderGlobal needs to get correct element of the array.
      * The array element number is calculated using renderChunk.getPosition().getY() / 16.
      * getY() is redirected to this method to always return 0.
@@ -109,13 +110,13 @@ public class MixinRenderGlobal {
     @Redirect(method = "renderEntities", at = @At(value = "INVOKE", target = "Lnet/minecraft/util/math/BlockPos;getY()I"), require = 1)
     public int getRenderChunkYPos(BlockPos pos) {
         //position is null when it's not cubic chunks renderer
-        if (this.position != null) {
+        if (this.position != null) { // also set from optifine specific mixins
             return 0;//must be 0 (or anything between 0 and 15)
         }
         return pos.getY();
     }
 
-    /**
+    /*
      * Return a 1-element array for Cubic Chunks world,
      * or original chunk.getEntityLists if not cubic chunks world.
      */
@@ -131,7 +132,7 @@ public class MixinRenderGlobal {
 
         ICube cube = ((IColumn) chunk).getCube(Coords.blockToCube(position.getY()));
         if (cube instanceof BlankCube) {
-            return ClassInheritanceMultiMapFactory.EMPTY_ARR;
+            return EntityContainer.EMPTY_ARR;
         }
 
         return new ClassInheritanceMultiMap[]{cube.getEntitySet()};

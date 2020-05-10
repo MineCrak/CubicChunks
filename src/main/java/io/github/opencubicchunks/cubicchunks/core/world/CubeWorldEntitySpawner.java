@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -23,11 +24,8 @@
  */
 package io.github.opencubicchunks.cubicchunks.core.world;
 
-import io.github.opencubicchunks.cubicchunks.core.server.CubeWatcher;
-import io.github.opencubicchunks.cubicchunks.core.server.PlayerCubeMap;
-import io.github.opencubicchunks.cubicchunks.core.world.cube.Cube;
-import io.github.opencubicchunks.cubicchunks.core.server.CubeWatcher;
 import io.github.opencubicchunks.cubicchunks.api.util.CubePos;
+import io.github.opencubicchunks.cubicchunks.core.server.CubeWatcher;
 import io.github.opencubicchunks.cubicchunks.core.server.PlayerCubeMap;
 import io.github.opencubicchunks.cubicchunks.core.world.cube.Cube;
 import mcp.MethodsReturnNonnullByDefault;
@@ -54,11 +52,12 @@ import java.util.Random;
 import java.util.Set;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
 
 @ParametersAreNonnullByDefault
 @MethodsReturnNonnullByDefault
-public class CubeWorldEntitySpawner extends WorldEntitySpawner {
+public class CubeWorldEntitySpawner implements IWorldEntitySpawner {
 
     private static final int CUBES_PER_CHUNK = 16;
     private static final int MOB_COUNT_DIV = (int) Math.pow(17.0D, 2.0D) * CUBES_PER_CHUNK;
@@ -94,7 +93,8 @@ public class CubeWorldEntitySpawner extends WorldEntitySpawner {
 
     private int addEligibleChunks(WorldServer world, Set<CubePos> possibleChunks) {
         int chunkCount = 0;
-
+        Random r = world.rand;
+        Set<CubePos> allCubes = new HashSet<>();
         for (EntityPlayer player : world.playerEntities) {
             if (player.isSpectator()) {
                 continue;
@@ -104,15 +104,17 @@ public class CubeWorldEntitySpawner extends WorldEntitySpawner {
             for (int cubeXRel = -SPAWN_RADIUS; cubeXRel <= SPAWN_RADIUS; ++cubeXRel) {
                 for (int cubeYRel = -SPAWN_RADIUS; cubeYRel <= SPAWN_RADIUS; ++cubeYRel) {
                     for (int cubeZRel = -SPAWN_RADIUS; cubeZRel <= SPAWN_RADIUS; ++cubeZRel) {
+                        CubePos chunkPos = center.add(cubeXRel, cubeYRel, cubeZRel);
+
+                        if (allCubes.contains(chunkPos)) {
+                            continue;
+                        }
+                        assert !possibleChunks.contains(chunkPos);
+                        ++chunkCount;
+
                         boolean isEdge = cubeXRel == -SPAWN_RADIUS || cubeXRel == SPAWN_RADIUS ||
                                 cubeYRel == -SPAWN_RADIUS || cubeYRel == SPAWN_RADIUS ||
                                 cubeZRel == -SPAWN_RADIUS || cubeZRel == SPAWN_RADIUS;
-                        CubePos chunkPos = center.add(cubeXRel, cubeYRel, cubeZRel);
-
-                        if (possibleChunks.contains(chunkPos)) {
-                            continue;
-                        }
-                        ++chunkCount;
 
                         if (isEdge || !world.getWorldBorder().contains(chunkPos.chunkPos())) {
                             continue;
@@ -120,7 +122,10 @@ public class CubeWorldEntitySpawner extends WorldEntitySpawner {
                         CubeWatcher chunkInfo = ((PlayerCubeMap) world.getPlayerChunkMap()).getCubeWatcher(chunkPos);
 
                         if (chunkInfo != null && chunkInfo.isSentToPlayers()) {
-                            possibleChunks.add(chunkPos);
+                            allCubes.add(chunkPos);
+                            if (r.nextInt(SPAWN_RADIUS * 2 + 1) == 0) {
+                                possibleChunks.add(chunkPos);
+                            }
                         }
                     }
                 }
@@ -183,8 +188,8 @@ public class CubeWorldEntitySpawner extends WorldEntitySpawner {
                     }
 
                     if (!world.canCreatureTypeSpawnHere(mobType, biomeMobs, blockPos) ||
-                            !canCreatureTypeSpawnAtLocation(EntitySpawnPlacementRegistry
-                                    .getPlacementForEntity(biomeMobs.entityClass), (World) world, blockPos)) {
+                            !WorldEntitySpawner.canCreatureTypeSpawnAtLocation(EntitySpawnPlacementRegistry
+                                    .getPlacementForEntity(biomeMobs.entityClass), world, blockPos)) {
                         continue;
                     }
                     EntityLiving toSpawn;
@@ -201,11 +206,11 @@ public class CubeWorldEntitySpawner extends WorldEntitySpawner {
 
                     toSpawn.setLocationAndAngles(entityX, entityY, entityZ, rand.nextFloat() * 360.0F, 0.0F);
 
-                    Event.Result canSpawn = ForgeEventFactory.canEntitySpawn(toSpawn, (World) world, entityX, entityY, entityZ);
+                    Event.Result canSpawn = ForgeEventFactory.canEntitySpawn(toSpawn, world, entityX, entityY, entityZ, null);
                     if (canSpawn == Event.Result.ALLOW ||
                             (canSpawn == Event.Result.DEFAULT && toSpawn.getCanSpawnHere() &&
                                     toSpawn.isNotColliding())) {
-                        if (!ForgeEventFactory.doSpecialSpawn(toSpawn, (World) world, entityX, entityY, entityZ)) {
+                        if (!ForgeEventFactory.doSpecialSpawn(toSpawn, world, entityX, entityY, entityZ, null)) {
                             entityData = toSpawn.onInitialSpawn(world.getDifficultyForLocation(new BlockPos(toSpawn)), entityData);
                         }
 
@@ -240,7 +245,7 @@ public class CubeWorldEntitySpawner extends WorldEntitySpawner {
                 (type.getAnimal() && !spawnOnSetTickRate));
     }
 
-    private static BlockPos getRandomChunkPosition(WorldServer world, CubePos pos) {
+    @Nullable private static BlockPos getRandomChunkPosition(WorldServer world, CubePos pos) {
         int blockX = pos.getMinBlockX() + world.rand.nextInt(Cube.SIZE);
         int blockZ = pos.getMinBlockZ() + world.rand.nextInt(Cube.SIZE);
 

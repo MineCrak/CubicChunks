@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -23,13 +24,14 @@
  */
 package io.github.opencubicchunks.cubicchunks.core.server.chunkio;
 
-import static io.github.opencubicchunks.cubicchunks.core.util.WorldServerAccess.getPendingTickListEntriesHashSet;
-import static io.github.opencubicchunks.cubicchunks.core.util.WorldServerAccess.getPendingTickListEntriesThisTick;
-
-import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
 import io.github.opencubicchunks.cubicchunks.api.util.Coords;
-import io.github.opencubicchunks.cubicchunks.core.world.ServerHeightMap;
+import io.github.opencubicchunks.cubicchunks.api.world.CubeDataEvent;
 import io.github.opencubicchunks.cubicchunks.api.world.IColumn;
+import io.github.opencubicchunks.cubicchunks.api.world.IHeightMap;
+import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
+import io.github.opencubicchunks.cubicchunks.core.asm.mixin.ICubicWorldInternal;
+import io.github.opencubicchunks.cubicchunks.core.world.ClientHeightMap;
+import io.github.opencubicchunks.cubicchunks.core.world.ServerHeightMap;
 import io.github.opencubicchunks.cubicchunks.core.world.cube.Cube;
 import mcp.MethodsReturnNonnullByDefault;
 import net.minecraft.block.Block;
@@ -43,18 +45,16 @@ import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.NibbleArray;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
-import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.world.ChunkDataEvent;
 import net.minecraftforge.fml.common.FMLCommonHandler;
 
+import javax.annotation.ParametersAreNonnullByDefault;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
-import java.util.stream.Collectors;
 
-import javax.annotation.ParametersAreNonnullByDefault;
+import static net.minecraftforge.common.MinecraftForge.EVENT_BUS;
 
 @MethodsReturnNonnullByDefault
 @ParametersAreNonnullByDefault
@@ -75,7 +75,7 @@ class IONbtWriter {
         writeBaseColumn(column, level);
         writeBiomes(column, level);
         writeOpacityIndex(column, level);
-        MinecraftForge.EVENT_BUS.post(new ChunkDataEvent.Save((Chunk) column, columnNbt));
+        EVENT_BUS.post(new ChunkDataEvent.Save(column, columnNbt));
         return columnNbt;
     }
 
@@ -92,6 +92,8 @@ class IONbtWriter {
         writeTileEntities(cube, level);
         writeScheduledTicks(cube, level);
         writeLightingInfo(cube, level);
+        writeBiomes(cube, level);
+        writeModData(cube, cubeNbt);
         return cubeNbt;
     }
 
@@ -103,9 +105,9 @@ class IONbtWriter {
         nbt.setByte("v", (byte) 1);
         nbt.setLong("InhabitedTime", column.getInhabitedTime());
 
-        if (((Chunk) column).getCapabilities() != null) {
+        if (column.getCapabilities() != null) {
             try {
-                nbt.setTag("ForgeCaps", ((Chunk) column).getCapabilities().serializeNBT());
+                nbt.setTag("ForgeCaps", column.getCapabilities().serializeNBT());
             } catch (Exception exception) {
                 CubicChunks.LOGGER.error("A capability provider has thrown an exception trying to write state. It will not persist. "
                                 + "Report this to the mod author", exception);
@@ -118,7 +120,12 @@ class IONbtWriter {
     }
 
     private static void writeOpacityIndex(Chunk column, NBTTagCompound nbt) {// light index
-        nbt.setByteArray("OpacityIndex", ((ServerHeightMap) ((IColumn) column).getOpacityIndex()).getData());
+        IHeightMap hmap = ((IColumn) column).getOpacityIndex();
+        if (hmap instanceof ServerHeightMap) {
+            nbt.setByteArray("OpacityIndex", ((ServerHeightMap) hmap).getData());
+        } else {
+            nbt.setByteArray("OpacityIndexClient", ((ClientHeightMap) hmap).getData());
+        }
     }
 
     private static void writeBaseCube(Cube cube, NBTTagCompound cubeNbt) {
@@ -135,6 +142,15 @@ class IONbtWriter {
         cubeNbt.setBoolean("fullyPopulated", cube.isFullyPopulated());
 
         cubeNbt.setBoolean("initLightDone", cube.isInitialLightingDone());
+
+        if (cube.getCapabilities() != null) {
+            try {
+                cubeNbt.setTag("ForgeCaps", cube.getCapabilities().serializeNBT());
+            } catch (Exception exception) {
+                CubicChunks.LOGGER.error("A capability provider has thrown an exception trying to write state. It will not persist. "
+                        + "Report this to the mod author", exception);
+            }
+        }
     }
 
     private static void writeBlocks(Cube cube, NBTTagCompound cubeNbt) {
@@ -148,13 +164,45 @@ class IONbtWriter {
         cubeNbt.setTag("Sections", sectionList);
         byte[] abyte = new byte[Cube.SIZE * Cube.SIZE * Cube.SIZE];
         NibbleArray data = new NibbleArray();
-        NibbleArray add = ebs.getData().getDataForNBT(abyte, data);
+        NibbleArray add = null;
+        NibbleArray add2neid = null;
+
+        for (int i = 0; i < 4096; ++i) {
+            int x = i & 15;
+            int y = i >> 8 & 15;
+            int z = i >> 4 & 15;
+
+            @SuppressWarnings("deprecation")
+            int id = Block.BLOCK_STATE_IDS.get(ebs.getData().get(x, y, z));
+
+            int in1 = (id >> 12) & 0xF;
+            int in2 = (id >> 16) & 0xF;
+
+            if (in1 != 0) {
+                if (add == null) {
+                    add = new NibbleArray();
+                }
+                add.setIndex(i, in1);
+            }
+            if (in2 != 0) {
+                if (add2neid == null) {
+                    add2neid = new NibbleArray();
+                }
+                add2neid.setIndex(i, in2);
+            }
+
+            abyte[i] = (byte) (id >> 4 & 255);
+            data.setIndex(i, id & 15);
+        }
 
         section.setByteArray("Blocks", abyte);
         section.setByteArray("Data", data.getData());
 
         if (add != null) {
             section.setByteArray("Add", add.getData());
+        }
+        if (add2neid != null) {
+            section.setByteArray("Add2", add2neid.getData());
         }
 
         section.setByteArray("BlockLight", ebs.getBlockLight().getData());
@@ -224,23 +272,28 @@ class IONbtWriter {
         lightingInfo.setByte("EdgeNeedSkyLightUpdate", edgeNeedSkyLightUpdate);
     }
 
+    private static void writeModData(Cube cube, NBTTagCompound level) {
+        EVENT_BUS.post(new CubeDataEvent.Save(cube, level));
+    }
+
+    private static void writeBiomes(Cube cube, NBTTagCompound nbt) {// biomes
+        byte[] biomes = cube.getBiomeArray();
+        if (biomes != null)
+            nbt.setByteArray("Biomes", biomes);
+    }
+
     private static List<NextTickListEntry> getScheduledTicks(Cube cube) {
         ArrayList<NextTickListEntry> out = new ArrayList<>();
 
-        // make sure this is a server
+        // make sure this is a server, otherwise don't save these, writing to client cache
         if (!(cube.getWorld() instanceof WorldServer)) {
-            throw new Error("Column is not on the server!");
+            return out;
         }
-        WorldServer worldServer = (WorldServer) cube.getWorld();
+        WorldServer worldServer = cube.getWorld();
 
-        // copy the ticks for this cube
-        copyScheduledTicks(out, getPendingTickListEntriesHashSet(worldServer), cube);
-        copyScheduledTicks(out, getPendingTickListEntriesThisTick(worldServer), cube);
+        out.addAll(((ICubicWorldInternal.Server) worldServer).getScheduledTicks().getForCube(cube.getCoords()));
+        out.addAll(((ICubicWorldInternal.Server) worldServer).getThisTickScheduledTicks().getForCube(cube.getCoords()));
 
         return out;
-    }
-
-    private static void copyScheduledTicks(ArrayList<NextTickListEntry> out, Collection<NextTickListEntry> scheduledTicks, Cube cube) {
-        out.addAll(scheduledTicks.stream().filter(scheduledTick -> cube.containsBlockPos(scheduledTick.position)).collect(Collectors.toList()));
     }
 }

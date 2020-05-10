@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -42,6 +43,7 @@ public abstract class MixinPacketBufferBlockPosWrite {
     @Shadow public abstract PacketBuffer writeVarInt(int input);
 
     /**
+     * @return block position from packet buffer
      * @author Barteks2x
      * @reason BlockPos.toLong works only between y=-2048 and y=2047
      */
@@ -57,6 +59,8 @@ public abstract class MixinPacketBufferBlockPosWrite {
     }
 
     /**
+     * @param pos block position to write
+     * @return this
      * @author Barteks2x
      * @reason BlockPos.toLong works only between y=-2048 and y=2047
      */

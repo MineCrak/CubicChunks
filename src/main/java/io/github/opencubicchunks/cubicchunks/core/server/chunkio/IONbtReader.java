@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -25,13 +26,14 @@ package io.github.opencubicchunks.cubicchunks.core.server.chunkio;
 
 import static io.github.opencubicchunks.cubicchunks.api.util.Coords.localToBlock;
 
-import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
-import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
-import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
 import io.github.opencubicchunks.cubicchunks.api.util.Coords;
-import io.github.opencubicchunks.cubicchunks.core.asm.mixin.ICubicWorldInternal;
-import io.github.opencubicchunks.cubicchunks.core.world.ServerHeightMap;
 import io.github.opencubicchunks.cubicchunks.api.world.IColumn;
+import io.github.opencubicchunks.cubicchunks.api.world.IHeightMap;
+import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
+import io.github.opencubicchunks.cubicchunks.core.asm.mixin.ICubicWorldInternal;
+import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
+import io.github.opencubicchunks.cubicchunks.core.world.ClientHeightMap;
+import io.github.opencubicchunks.cubicchunks.core.world.ServerHeightMap;
 import io.github.opencubicchunks.cubicchunks.core.world.cube.Cube;
 import mcp.MethodsReturnNonnullByDefault;
 import net.minecraft.block.Block;
@@ -84,7 +86,7 @@ public class IONbtReader {
         }
 
         // create the column
-        Chunk column = new Chunk((World) world, x, z);
+        Chunk column = new Chunk(world, x, z);
 
         // read the rest of the column properties
         column.setInhabitedTime(nbt.getLong("InhabitedTime"));
@@ -100,7 +102,12 @@ public class IONbtReader {
     }
 
     private static void readOpacityIndex(NBTTagCompound nbt, Chunk chunk) {// biomes
-        ((ServerHeightMap) ((IColumn) chunk).getOpacityIndex()).readData(nbt.getByteArray("OpacityIndex"));
+        IHeightMap hmap = ((IColumn) chunk).getOpacityIndex();
+        if (hmap instanceof ServerHeightMap) {
+            ((ServerHeightMap) hmap).readData(nbt.getByteArray("OpacityIndex"));
+        } else {
+            ((ClientHeightMap) hmap).setData(nbt.getByteArray("OpacityIndexClient"));
+        }
     }
 
     @Nullable
@@ -109,7 +116,7 @@ public class IONbtReader {
             throw new IllegalArgumentException(String.format("Invalid column (%d, %d) for cube at (%d, %d, %d)",
                     column.x, column.z, cubeX, cubeY, cubeZ));
         }
-        WorldServer world = (WorldServer) column.getWorld();
+        World world = column.getWorld();
         NBTTagCompound level = nbt.getCompoundTag("Level");
         Cube cube = readBaseCube(column, cubeX, cubeY, cubeZ, level, world);
         if (cube == null) {
@@ -120,7 +127,7 @@ public class IONbtReader {
         return cube;
     }
 
-    static void readCubeSyncPart(Cube cube, WorldServer world, NBTTagCompound nbt) {
+    static void readCubeSyncPart(Cube cube, World world, NBTTagCompound nbt) {
         // a hack so that the Column won't try to get cube from CubeCache/CubeProvider.
         cube.getColumn().preCacheCube(cube);
         NBTTagCompound level = nbt.getCompoundTag("Level");
@@ -128,13 +135,12 @@ public class IONbtReader {
         readTileEntities(level, world, cube);
         readScheduledBlockTicks(level, world);
         readLightingInfo(cube, level, world);
-
+        readBiomes(cube, level);
         cube.markSaved(); // its exactly the same as on disk so its not modified
     }
 
     @Nullable
-    private static Cube readBaseCube(Chunk column, int cubeX, int cubeY, int cubeZ, NBTTagCompound nbt,
-            WorldServer world) {// check the version number
+    private static Cube readBaseCube(Chunk column, int cubeX, int cubeY, int cubeZ, NBTTagCompound nbt, World world) {// check the version number
         byte version = nbt.getByte("v");
         if (version != 1) {
             throw new IllegalArgumentException("Cube has wrong version! " + version);
@@ -166,10 +172,14 @@ public class IONbtReader {
         cube.setFullyPopulated(nbt.getBoolean("fullyPopulated"));
 
         cube.setInitialLightingDone(nbt.getBoolean("initLightDone"));
+
+        if (cube.getCapabilities() != null && nbt.hasKey("ForgeCaps")) {
+            cube.getCapabilities().deserializeNBT(nbt.getCompoundTag("ForgeCaps"));
+        }
         return cube;
     }
 
-    private static void readBlocks(NBTTagCompound nbt, WorldServer world, Cube cube) {
+    @SuppressWarnings("deprecation") private static void readBlocks(NBTTagCompound nbt, World world, Cube cube) {
         boolean isEmpty = !nbt.hasKey("Sections");// is this an empty cube?
         if (!isEmpty) {
             NBTTagList sectionList = nbt.getTagList("Sections", 10);
@@ -179,9 +189,19 @@ public class IONbtReader {
 
             byte[] abyte = nbt.getByteArray("Blocks");
             NibbleArray data = new NibbleArray(nbt.getByteArray("Data"));
-            NibbleArray add = nbt.hasKey("Add", 7) ? new NibbleArray(nbt.getByteArray("Add")) : null;
+            NibbleArray add = nbt.hasKey("Add", Constants.NBT.TAG_BYTE_ARRAY) ? new NibbleArray(nbt.getByteArray("Add")) : null;
+            NibbleArray add2neid = nbt.hasKey("Add2", Constants.NBT.TAG_BYTE_ARRAY) ? new NibbleArray(nbt.getByteArray("Add2")) : null;
 
-            ebs.getData().setDataFromNBT(abyte, data, add);
+            for (int i = 0; i < 4096; i++) {
+                int x = i & 15;
+                int y = i >> 8 & 15;
+                int z = i >> 4 & 15;
+
+                int toAdd = add == null ? 0 : add.getFromIndex(i);
+                toAdd = (toAdd & 0xF) | (add2neid == null ? 0 : add2neid.getFromIndex(i) << 4);
+                int id = (toAdd << 12) | ((abyte[i] & 0xFF) << 4) | data.getFromIndex(i);
+                ebs.getData().set(x, y, z, Block.BLOCK_STATE_IDS.getByValue(id));
+            }
 
             ebs.setBlockLight(new NibbleArray(nbt.getByteArray("BlockLight")));
 
@@ -194,7 +214,7 @@ public class IONbtReader {
         }
     }
 
-    private static void readEntities(NBTTagCompound nbt, WorldServer world, Cube cube) {// entities
+    private static void readEntities(NBTTagCompound nbt, World world, Cube cube) {// entities
         cube.getEntityContainer().readFromNbt(nbt, "Entities", world, entity -> {
             // make sure this entity is really in the chunk
             int entityCubeX = Coords.getCubeXForEntity(entity);
@@ -215,19 +235,27 @@ public class IONbtReader {
         });
     }
 
-    private static void readTileEntities(NBTTagCompound nbt, WorldServer world, Cube cube) {// tile entities
+    private static void readTileEntities(NBTTagCompound nbt, World world, Cube cube) {// tile entities
         NBTTagList nbtTileEntities = nbt.getTagList("TileEntities", Constants.NBT.TAG_COMPOUND);
         for (int i = 0; i < nbtTileEntities.tagCount(); i++) {
             NBTTagCompound nbtTileEntity = nbtTileEntities.getCompoundTagAt(i);
             //TileEntity.create
-            TileEntity blockEntity = TileEntity.create((World) world, nbtTileEntity);
+            TileEntity blockEntity = TileEntity.create(world, nbtTileEntity);
             if (blockEntity != null) {
+                if (!cube.getCoords().containsBlock(blockEntity.getPos())) {
+                    CubicChunks.LOGGER.warn("TileEntity " + blockEntity + " is not in cube at " + cube.getCoords() + ", tile entity will be skipped");
+                    continue;
+                }
                 cube.addTileEntity(blockEntity);
             }
         }
     }
 
-    private static void readScheduledBlockTicks(NBTTagCompound nbt, WorldServer world) {
+    private static void readScheduledBlockTicks(NBTTagCompound nbt, World world) {
+        if (!(world instanceof WorldServer)) {
+            // if not server, reading from client cache which doesn't have scheduled ticks
+            return;
+        }
         NBTTagList nbtScheduledTicks = nbt.getTagList("TileTicks", 10);
         for (int i = 0; i < nbtScheduledTicks.tagCount(); i++) {
             NBTTagCompound nbtScheduledTick = nbtScheduledTicks.getCompoundTagAt(i);
@@ -253,7 +281,7 @@ public class IONbtReader {
         }
     }
 
-    private static void readLightingInfo(Cube cube, NBTTagCompound nbt, WorldServer world) {
+    private static void readLightingInfo(Cube cube, NBTTagCompound nbt, World world) {
         NBTTagCompound lightingInfo = nbt.getCompoundTag("LightingInfo");
         int[] lastHeightMap = lightingInfo.getIntArray("LastHeightMap"); // NO NO NO! TODO: Why is hightmap being stored in Cube's data?! kill it!
         int[] currentHeightMap = cube.getColumn().getHeightMap();
@@ -302,4 +330,8 @@ public class IONbtReader {
         }
     }
 
+    private static void readBiomes(Cube cube, NBTTagCompound nbt) {// biomes
+        if (nbt.hasKey("Biomes"))
+            cube.setBiomeArray(nbt.getByteArray("Biomes"));
+    }
 }

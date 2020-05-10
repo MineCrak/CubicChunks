@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -23,32 +24,26 @@
  */
 package io.github.opencubicchunks.cubicchunks.core.asm.mixin.core.common;
 
-import io.github.opencubicchunks.cubicchunks.core.event.CCEventFactory;
+import io.github.opencubicchunks.cubicchunks.api.world.ICubicWorld;
+import io.github.opencubicchunks.cubicchunks.core.asm.mixin.ICubicWorldInternal;
+import io.github.opencubicchunks.cubicchunks.core.server.SpawnCubes;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.World;
+import net.minecraftforge.common.DimensionManager;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
-
-import io.github.opencubicchunks.cubicchunks.core.event.CCEventFactory;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.world.WorldSettings;
-import net.minecraft.world.WorldType;
-import net.minecraft.world.storage.ISaveHandler;
-import net.minecraft.world.storage.WorldInfo;
 
 @Mixin(MinecraftServer.class)
 public class MixinMinecraftServer {
 
-    @Inject(method = "loadAllWorlds",
-            at = @At(
-                    value = "INVOKE",
-                    target = "Lnet/minecraft/world/WorldSettings;setGeneratorOptions(Ljava/lang/String;)Lnet/minecraft/world/WorldSettings;",
-                    shift = At.Shift.AFTER
-            ),
-            locals = LocalCapture.CAPTURE_FAILHARD)
-    private void onWorldSettingsCreate(String saveName, String worldNameIn, long seed, WorldType type, String generatorOptions, CallbackInfo cbi, ISaveHandler isavehandler, WorldInfo worldinfo, WorldSettings worldsettings) {
-        CCEventFactory.onWorldSettingsCreate(worldsettings);
+    @Inject(method = "initialWorldChunkLoad", at = @At("HEAD"), cancellable = true)
+    private void onInitialSpawnLoad(CallbackInfo ci) {
+        World world = DimensionManager.getWorld(0);
+        if (((ICubicWorld) world).isCubicWorld()) {
+            ((ICubicWorldInternal.Server) world).setSpawnArea(new SpawnCubes());
+            ((ICubicWorldInternal.Server) world).getSpawnArea().update(world);
+        }
     }
-
 }

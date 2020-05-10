@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -71,7 +72,7 @@ public class MixinTileEntityEndGateway {
      */
     @Overwrite
     private static Chunk getChunk(World world, Vec3d pos) {
-        Chunk chunk = world.getChunkFromChunkCoords(MathHelper.floor(pos.x / Cube.SIZE_D), MathHelper.floor(pos.z / Cube.SIZE_D));
+        Chunk chunk = world.getChunk(MathHelper.floor(pos.x / Cube.SIZE_D), MathHelper.floor(pos.z / Cube.SIZE_D));
         if (((ICubicWorld) chunk.getWorld()).isCubicWorld()){
             for (int cubeY = 0; cubeY < 16; cubeY++) {
                 ((IColumn) chunk).getCube(cubeY);// load the cube

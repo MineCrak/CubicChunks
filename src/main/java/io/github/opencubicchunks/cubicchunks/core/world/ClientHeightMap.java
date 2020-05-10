@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -23,24 +24,22 @@
  */
 package io.github.opencubicchunks.cubicchunks.core.world;
 
-import static io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager.MAX_CLIENT_LIGHT_SCAN_DEPTH;
-
 import com.google.common.base.Throwables;
-import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
-import io.github.opencubicchunks.cubicchunks.core.world.cube.Cube;
-import io.github.opencubicchunks.cubicchunks.api.world.IHeightMap;
 import io.github.opencubicchunks.cubicchunks.api.util.Coords;
+import io.github.opencubicchunks.cubicchunks.api.world.IHeightMap;
+import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
 import io.github.opencubicchunks.cubicchunks.core.world.cube.Cube;
 import mcp.MethodsReturnNonnullByDefault;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.chunk.Chunk;
 
-import java.io.ByteArrayInputStream;
-import java.io.DataInputStream;
-import java.io.IOException;
-
 import javax.annotation.Nonnull;
 import javax.annotation.ParametersAreNonnullByDefault;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
 
 @ParametersAreNonnullByDefault
 @MethodsReturnNonnullByDefault
@@ -125,6 +124,23 @@ public class ClientHeightMap implements IHeightMap {
         hmap.set(getIndex(localX, localZ), height);
     }
 
+    public byte[] getData() {
+        try {
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            DataOutputStream out = new DataOutputStream(buf);
+
+            for (int i = 0; i < Cube.SIZE * Cube.SIZE; i++) {
+                out.writeInt(hmap.get(i));
+            }
+
+            out.close();
+            return buf.toByteArray();
+        } catch (IOException e) {
+            Throwables.throwIfUnchecked(e);
+            throw new AssertionError();
+        }
+    }
+
     public void setData(@Nonnull byte[] data) {
         try {
             ByteArrayInputStream buf = new ByteArrayInputStream(data);
@@ -136,7 +152,8 @@ public class ClientHeightMap implements IHeightMap {
 
             in.close();
         } catch (IOException e) {
-            throw Throwables.propagate(e);
+            Throwables.throwIfUnchecked(e);
+            throw new AssertionError();
         }
     }
 

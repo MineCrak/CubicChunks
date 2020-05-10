@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -46,6 +47,9 @@ public class AddressTools {
 
     /**
      * Unpacks localX from packed address. Works for both, x/y/z and x/z version
+     *
+     * @param localAddress local address to unpack
+     * @return x coordinate from that local address
      */
     public static int getLocalX(int localAddress) {
         return Bits.unpackUnsigned(localAddress, 4, 0);
@@ -53,6 +57,9 @@ public class AddressTools {
 
     /**
      * Unpacks localY from packed address.
+     *
+     * @param localAddress local address to unpack
+     * @return y coordinate from that local address
      */
     public static int getLocalY(int localAddress) {
         return Bits.unpackUnsigned(localAddress, 4, 8);
@@ -60,6 +67,9 @@ public class AddressTools {
 
     /**
      * Unpacks localZ from packed address. Works for both, x/y/z and x/z version
+     *
+     * @param localAddress local address to unpack
+     * @return z coordinate from that local address
      */
     public static int getLocalZ(int localAddress) {
         return Bits.unpackUnsigned(localAddress, 4, 4);
@@ -67,5 +77,9 @@ public class AddressTools {
 
     public static int getLocalAddress(BlockPos pos) {
         return getLocalAddress(pos.getX(), pos.getY(), pos.getZ());
+    }
+
+    public static int getBiomeAddress(int biomeX, int biomeZ) {
+        return biomeX << 3 | biomeZ;
     }
 }

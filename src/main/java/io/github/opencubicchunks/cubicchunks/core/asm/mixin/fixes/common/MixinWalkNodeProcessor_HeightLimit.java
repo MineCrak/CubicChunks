@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -64,7 +65,6 @@ public abstract class MixinWalkNodeProcessor_HeightLimit extends NodeProcessor {
     @ModifyConstant(
             method = "getSafePoint",
             constant = @Constant(
-                    intValue = 0,
                     expandZeroConditions = Constant.Condition.GREATER_THAN_ZERO,
                     ordinal = 1
             ))

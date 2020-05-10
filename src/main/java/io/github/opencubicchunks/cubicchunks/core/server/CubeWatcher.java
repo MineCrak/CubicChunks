@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -24,31 +25,24 @@
 package io.github.opencubicchunks.cubicchunks.core.server;
 
 import com.google.common.base.Predicate;
-import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
-import io.github.opencubicchunks.cubicchunks.core.network.PacketCubeBlockChange;
-import io.github.opencubicchunks.cubicchunks.core.network.PacketDispatcher;
-import io.github.opencubicchunks.cubicchunks.core.network.PacketUnloadCube;
-import io.github.opencubicchunks.cubicchunks.core.server.chunkio.async.forge.AsyncWorldIOExecutor;
+import gnu.trove.list.TShortList;
+import gnu.trove.list.array.TShortArrayList;
+import io.github.opencubicchunks.cubicchunks.api.util.CubePos;
+import io.github.opencubicchunks.cubicchunks.api.world.CubeUnWatchEvent;
 import io.github.opencubicchunks.cubicchunks.api.world.ICubeProviderServer;
 import io.github.opencubicchunks.cubicchunks.api.world.ICubeWatcher;
 import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
-import io.github.opencubicchunks.cubicchunks.api.world.CubeUnWatchEvent;
-import io.github.opencubicchunks.cubicchunks.api.world.CubeWatchEvent;
-import io.github.opencubicchunks.cubicchunks.core.entity.CubicEntityTracker;
+import io.github.opencubicchunks.cubicchunks.core.asm.mixin.ICubicWorldInternal;
+import io.github.opencubicchunks.cubicchunks.core.entity.ICubicEntityTracker;
 import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
 import io.github.opencubicchunks.cubicchunks.core.network.PacketCubeBlockChange;
 import io.github.opencubicchunks.cubicchunks.core.network.PacketDispatcher;
 import io.github.opencubicchunks.cubicchunks.core.network.PacketUnloadCube;
 import io.github.opencubicchunks.cubicchunks.core.server.chunkio.async.forge.AsyncWorldIOExecutor;
 import io.github.opencubicchunks.cubicchunks.core.util.AddressTools;
-import io.github.opencubicchunks.cubicchunks.api.util.CubePos;
 import io.github.opencubicchunks.cubicchunks.core.util.ticket.ITicket;
-import io.github.opencubicchunks.cubicchunks.core.asm.mixin.ICubicWorldInternal;
 import io.github.opencubicchunks.cubicchunks.core.world.cube.Cube;
-import gnu.trove.list.TShortList;
-import gnu.trove.list.array.TShortArrayList;
-import gnu.trove.map.TIntObjectMap;
-import gnu.trove.map.hash.TIntObjectHashMap;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import mcp.MethodsReturnNonnullByDefault;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.entity.Entity;
@@ -70,60 +64,66 @@ import javax.annotation.ParametersAreNonnullByDefault;
 @MethodsReturnNonnullByDefault
 public class CubeWatcher implements ITicket, ICubeWatcher {
 
-    private final Consumer<Cube> consumer = (c) -> {
-        this.cube = c;
-        this.loading = false;
-        if (this.cube != null) {
-            this.cube.getTickets().add(this);
-        }
-    };
+    private final Consumer<Cube> consumer;
+
     private final CubeProviderServer cubeCache;
     private PlayerCubeMap playerCubeMap;
     @Nullable private Cube cube;
-    private final TIntObjectMap<WatcherPlayerEntry> players = new TIntObjectHashMap<>();
+    private final ObjectArrayList<EntityPlayerMP> players = ObjectArrayList.wrap(new EntityPlayerMP[0]);
     private final TShortList dirtyBlocks = new TShortArrayList(64);
     private final CubePos cubePos;
     private long previousWorldTime = 0;
     private boolean sentToPlayers = false;
     private boolean loading = true;
+    private boolean invalid = false;
 
     // CHECKED: 1.10.2-12.18.1.2092
     CubeWatcher(PlayerCubeMap playerCubeMap, CubePos cubePos) {
+        this.cubePos = cubePos;
         this.playerCubeMap = playerCubeMap;
         this.cubeCache = ((ICubicWorldInternal.Server) playerCubeMap.getWorldServer()).getCubeCache();
+        this.consumer = (c) -> {
+            if (this.invalid) {
+                return;
+            }
+            this.cube = c;
+            this.loading = false;
+            if (this.cube != null) {
+                this.cube.getTickets().add(this);
+            }
+        };
         this.cubeCache.asyncGetCube(
                 cubePos.getX(), cubePos.getY(), cubePos.getZ(),
                 ICubeProviderServer.Requirement.LOAD,
                 consumer);
-        this.cubePos = cubePos;
     }
 
     // CHECKED: 1.10.2-12.18.1.2092
     void addPlayer(EntityPlayerMP player) {
-        if (this.players.containsKey(player.getEntityId())) {
-            CubicChunks.LOGGER.debug("Failed to expand player. {} already is in cube at {}", player, cubePos);
+        if (this.players.contains(player)) {
+            CubicChunks.LOGGER.debug("Failed to add player. {} already is in cube at {}", player, cubePos);
             return;
         }
         if (this.players.isEmpty()) {
             this.previousWorldTime = this.getWorldTime();
         }
-        this.players.put(player.getEntityId(), new WatcherPlayerEntry(player));
+        this.players.add(player);
 
         if (this.sentToPlayers) {
             this.sendToPlayer(player);
-            ((CubicEntityTracker) playerCubeMap.getWorldServer().getEntityTracker())
+            ((ICubicEntityTracker) playerCubeMap.getWorldServer().getEntityTracker())
                     .sendLeashedEntitiesInCube(player, this.getCube());
         }
     }
 
     // CHECKED: 1.10.2-12.18.1.2092
     void removePlayer(EntityPlayerMP player) {
-        if (!this.players.containsKey(player.getEntityId())) {
+        if (!this.players.contains(player)) {
             return;
         }
         // If we haven't loaded yet don't load the chunk just so we can clean it up
         if (this.cube == null) {
-            this.players.remove(player.getEntityId());
+            this.players.remove(player);
 
             if (this.players.isEmpty()) {
                 if (loading) {
@@ -131,6 +131,7 @@ public class CubeWatcher implements ITicket, ICubeWatcher {
                             cubePos.getX(), cubePos.getY(), cubePos.getZ(),
                             c -> this.cube = c);
                 }
+                invalid = true;
                 playerCubeMap.removeEntry(this);
             }
             return;
@@ -138,12 +139,14 @@ public class CubeWatcher implements ITicket, ICubeWatcher {
 
         if (this.sentToPlayers) {
             PacketDispatcher.sendTo(new PacketUnloadCube(this.cubePos), player);
+            playerCubeMap.removeSchedulesSendCubeToPlayer(cube, player);
         }
 
-        this.players.remove(player.getEntityId());
+        this.players.remove(player);
         MinecraftForge.EVENT_BUS.post(new CubeUnWatchEvent(cube, cubePos, this, player));
 
         if (this.players.isEmpty()) {
+            invalid = true;
             playerCubeMap.removeEntry(this);
         }
     }
@@ -206,9 +209,8 @@ public class CubeWatcher implements ITicket, ICubeWatcher {
         //set to true before adding to queue so that sendToPlayer can actually add it
         this.sentToPlayers = true;
 
-        for (WatcherPlayerEntry playerEntry : this.players.valueCollection()) {
-            MinecraftForge.EVENT_BUS.post(new CubeWatchEvent(cube, cubePos, this, playerEntry.player));
-            sendToPlayer(playerEntry.player);
+        for (EntityPlayerMP playerEntry : this.players) {
+            sendToPlayer(playerEntry);
         }
 
         return SendToPlayersResult.CUBE_SENT;
@@ -267,7 +269,7 @@ public class CubeWatcher implements ITicket, ICubeWatcher {
 
         if (this.dirtyBlocks.size() >= ForgeModContainer.clumpingThreshold) {
             // send whole cube
-            this.players.valueCollection().forEach(entry -> playerCubeMap.scheduleSendCubeToPlayer(cube, entry.player));
+            this.players.forEach(entry -> playerCubeMap.scheduleSendCubeToPlayer(cube, entry));
         } else {
             // send all the dirty blocks
             sendPacketToAllPlayers(new PacketCubeBlockChange(this.cube, this.dirtyBlocks));
@@ -297,16 +299,32 @@ public class CubeWatcher implements ITicket, ICubeWatcher {
     }
 
     boolean containsPlayer(EntityPlayerMP player) {
-        return this.players.containsKey(player.getEntityId());
+        return this.players.contains(player);
     }
 
     boolean hasPlayerMatching(Predicate<EntityPlayerMP> predicate) {
-        //if any of them is true - stop and return false, then negate the result to get true
-        return !this.players.forEachValue(value -> !predicate.apply(value.player));
+        for (EntityPlayerMP e : players.elements()) {
+            if (e == null) {
+                break;
+            }
+            if (predicate.apply(e)) {
+                return true;
+            }
+        }
+        return false;
     }
     
     boolean hasPlayerMatchingInRange(Predicate<EntityPlayerMP> predicate, int range) {
-        return !this.players.forEachValue(value -> !(predicate.apply(value.player) && this.getDistanceSq(getCubePos(), value.player) < range * range));
+        double d = range*range;
+        for (EntityPlayerMP e : players.elements()) {
+            if (e == null) {
+                break;
+            }
+            if (predicate.apply(e) && getDistanceSq(cubePos, e) <= d) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private double getDistanceSq(CubePos cubePos, Entity entity) {
@@ -326,8 +344,11 @@ public class CubeWatcher implements ITicket, ICubeWatcher {
     double getClosestPlayerDistance() {
         double min = Double.MAX_VALUE;
 
-        for (WatcherPlayerEntry entry : this.players.valueCollection()) {
-            double dist = getDistanceSq(cubePos, entry.player);
+        for (EntityPlayerMP entry : this.players.elements()) {
+            if (entry == null) {
+                break;
+            }
+            double dist = getDistanceSq(cubePos, entry);
 
             if (dist < min) {
                 min = dist;
@@ -342,14 +363,14 @@ public class CubeWatcher implements ITicket, ICubeWatcher {
     }
 
     private void sendPacketToAllPlayers(Packet<?> packet) {
-        for (WatcherPlayerEntry entry : this.players.valueCollection()) {
-            entry.player.connection.sendPacket(packet);
+        for (EntityPlayerMP entry : this.players) {
+            entry.connection.sendPacket(packet);
         }
     }
 
     @Override public void sendPacketToAllPlayers(IMessage packet) {
-        for (WatcherPlayerEntry entry : this.players.valueCollection()) {
-            PacketDispatcher.sendTo(packet, entry.player);
+        for (EntityPlayerMP entry : this.players) {
+            PacketDispatcher.sendTo(packet, entry);
         }
     }
 

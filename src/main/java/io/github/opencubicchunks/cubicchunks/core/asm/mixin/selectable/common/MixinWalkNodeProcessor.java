@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -65,7 +66,7 @@ public abstract class MixinWalkNodeProcessor extends NodeProcessor {
             int x2 = MathHelper.ceil(maxX) + 1;
             int y2 = MathHelper.ceil(maxY) + 1;
             int z2 = MathHelper.ceil(maxZ) + 1;
-            for (MutableBlockPos pos : MutableBlockPos.mutablesBetween(x1, y1, z1, x2, y2, z2)) {
+            for (MutableBlockPos pos : MutableBlockPos.getAllInBoxMutable(x1, y1, z1, x2, y2, z2)) {
                 IBlockState bstate = blockaccess.getBlockState(pos);
                 bstate.addCollisionBoxToList(worldIn, pos, aabb, aabbList,
                         entity, false);

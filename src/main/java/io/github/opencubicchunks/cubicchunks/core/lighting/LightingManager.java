@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -88,6 +89,8 @@ public class LightingManager implements ILightingManager {
     }
     /**
      * Registers height change listener, that receives all height changes after initial lighting is done
+     *
+     * @param listener height change listener
      */
     public void registerHeightChangeListener(IHeightChangeListener listener) {
         heightUpdateListeners.add(listener);
@@ -242,9 +245,9 @@ public class LightingManager implements ILightingManager {
                 if (cube.edgeNeedSkyLightUpdate[dir.ordinal()]) {
                     CubePos cpos = cube.getCoords();
                     Cube loadedCube = cache.getLoadedCube(
-                            cpos.getX() + dir.getFrontOffsetX(),
-                            cpos.getY() + dir.getFrontOffsetY(),
-                            cpos.getZ() + dir.getFrontOffsetZ());
+                            cpos.getX() + dir.getXOffset(),
+                            cpos.getY() + dir.getYOffset(),
+                            cpos.getZ() + dir.getZOffset());
                     if (loadedCube == null)
                         continue;
 

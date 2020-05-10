@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -23,6 +24,7 @@
  */
 package io.github.opencubicchunks.cubicchunks.core.server;
 
+import io.github.opencubicchunks.cubicchunks.core.CubicChunksConfig;
 import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
 import io.github.opencubicchunks.cubicchunks.core.server.chunkio.ICubeIO;
 import io.github.opencubicchunks.cubicchunks.core.server.chunkio.RegionCubeIO;
@@ -32,10 +34,6 @@ import io.github.opencubicchunks.cubicchunks.api.world.ICube;
 import io.github.opencubicchunks.cubicchunks.api.worldgen.ICubeGenerator;
 import io.github.opencubicchunks.cubicchunks.api.world.ICubeProviderServer;
 import io.github.opencubicchunks.cubicchunks.core.asm.CubicChunksMixinConfig;
-import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
-import io.github.opencubicchunks.cubicchunks.core.server.chunkio.ICubeIO;
-import io.github.opencubicchunks.cubicchunks.core.server.chunkio.RegionCubeIO;
-import io.github.opencubicchunks.cubicchunks.core.server.chunkio.async.forge.AsyncWorldIOExecutor;
 import io.github.opencubicchunks.cubicchunks.api.util.Box;
 import io.github.opencubicchunks.cubicchunks.api.util.CubePos;
 import io.github.opencubicchunks.cubicchunks.api.util.XYZMap;
@@ -54,12 +52,14 @@ import net.minecraft.world.biome.Biome;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.gen.ChunkProviderServer;
 import net.minecraftforge.common.ForgeChunkManager;
+import net.minecraftforge.fml.common.registry.GameRegistry;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Random;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 import javax.annotation.Detainted;
@@ -78,7 +78,7 @@ import javax.annotation.ParametersAreNonnullByDefault;
  */
 @MethodsReturnNonnullByDefault
 @ParametersAreNonnullByDefault
-public class CubeProviderServer extends ChunkProviderServer implements ICubeProviderServer, ICubeProviderInternal {
+public class CubeProviderServer extends ChunkProviderServer implements ICubeProviderServer, ICubeProviderInternal.Server {
 
     @Nonnull private WorldServer worldServer;
     @Nonnull private ICubeIO cubeIO;
@@ -88,23 +88,20 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
 
     @Nonnull private ICubeGenerator cubeGen;
     @Nonnull private Profiler profiler;
-    private final boolean doRandomBlockTicksHere;
 
     public CubeProviderServer(WorldServer worldServer, ICubeGenerator cubeGen) {
-        super((WorldServer) worldServer,
+        super(worldServer,
                 worldServer.getSaveHandler().getChunkLoader(worldServer.provider), // forge uses this in
-                null); // safe to null out IChunkGenerator (Note: lets hope mods don't touch it, ik its public)
+                worldServer.provider.createChunkGenerator()); // let's create the chunk generator, for now the vanilla one may be enough
 
         this.cubeGen = cubeGen;
         this.worldServer = worldServer;
-        this.profiler = ((WorldServer) worldServer).profiler;
+        this.profiler = worldServer.profiler;
         try {
             this.cubeIO = new RegionCubeIO(worldServer);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-
-        doRandomBlockTicksHere = CubicChunksMixinConfig.BoolOptions.RANDOM_TICK_IN_CUBE.getValue();
     }
 
     @Override
@@ -124,7 +121,7 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
      */
     @Nullable @Override
     public Chunk getLoadedColumn(int columnX, int columnZ) {
-        return this.id2ChunkMap.get(ChunkPos.asLong(columnX, columnZ));
+        return this.loadedChunks.get(ChunkPos.asLong(columnX, columnZ));
     }
 
     @Nullable
@@ -154,7 +151,7 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
     public Chunk loadChunk(int columnX, int columnZ, @Nullable Runnable runnable) {
         // TODO: Set this to LOAD when PlayerCubeMap works
         if (runnable == null) {
-            return (Chunk) getColumn(columnX, columnZ, /*Requirement.LOAD*/Requirement.LIGHT);
+            return getColumn(columnX, columnZ, /*Requirement.LOAD*/Requirement.LIGHT);
         }
 
         // TODO here too
@@ -184,7 +181,7 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
                 this.cubeIO.saveCube(cube);
             }
         }
-        for (Chunk chunk : id2ChunkMap.values()) { // save columns
+        for (Chunk chunk : loadedChunks.values()) { // save columns
             // save the column
             if (chunk.needsSaving(alwaysTrue)) {
                 this.cubeIO.saveColumn(chunk);
@@ -199,18 +196,12 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
         // NOTE: the return value is completely ignored
         profiler.startSection("providerTick");
         long i = System.currentTimeMillis();
-        int randomTickSpeed = this.world.getGameRules().getInt("randomTickSpeed");
         Random rand = this.world.rand;
         PlayerCubeMap playerCubeMap = ((PlayerCubeMap) this.world.getPlayerChunkMap());
         Iterator<Cube> watchersIterator = playerCubeMap.getCubeIterator();
+        BooleanSupplier tickFaster = () -> System.currentTimeMillis() - i > 40;
         while (watchersIterator.hasNext()) {
-            Cube cube = watchersIterator.next();
-            cube.tickCubeServer(() -> System.currentTimeMillis() - i > 40, rand);
-            if (!doRandomBlockTicksHere)
-                continue;
-            int randomTickCounter = randomTickSpeed;
-            while (randomTickCounter-- > 0)
-                cube.randomTick(this.world, rand);
+            watchersIterator.next().tickCubeServer(tickFaster, rand);
         }
         profiler.endSection();
         return false;
@@ -218,7 +209,7 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
 
     @Override
     public String makeString() {
-        return "CubeProviderServer: " + this.id2ChunkMap.size() + " columns, "
+        return "CubeProviderServer: " + this.loadedChunks.size() + " columns, "
                 + this.cubeMap.getSize() + " cubes";
     }
 
@@ -236,7 +227,7 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
 
     @Override
     public boolean chunkExists(int cubeX, int cubeZ) {
-        return this.id2ChunkMap.get(ChunkPos.asLong(cubeX, cubeZ)) != null;
+        return this.loadedChunks.get(ChunkPos.asLong(cubeX, cubeZ)) != null;
     }
 
     @Override // TODO: What it does? implement it
@@ -322,6 +313,10 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
         }
 
         return postCubeLoadAttempt(cubeX, cubeY, cubeZ, cube, column, req);
+    }
+
+    @Override public boolean isCubeGenerated(int cubeX, int cubeY, int cubeZ) {
+        return getLoadedCube(cubeX, cubeY, cubeZ) != null || cubeIO.cubeExists(cubeX, cubeY, cubeZ);
     }
 
     /**
@@ -429,11 +424,28 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
         int cubeY = cube.getY();
         int cubeZ = cube.getZ();
 
-        // for all cubes needed for full population - generate them their population requirements
-        cubeGen.getFullPopulationRequirements(cube).forEachPoint((x, y, z) -> {
+        // for all cubes needed for full population - generate their population requirements
+        Box fullPopulation = cubeGen.getFullPopulationRequirements(cube);
+        if (CubicChunksConfig.useVanillaChunkWorldGenerators) {
+            if (cube.getY() >= 0 && cube.getY() < 16) {
+                fullPopulation = new Box(
+                        0, -cube.getY(), 0,
+                        0, 16 - cube.getY() - 1, 0
+                ).add(fullPopulation);
+            }
+        }
+        fullPopulation.forEachPoint((x, y, z) -> {
             // this also generates the cube
             Cube fullPopulationCube = getCube(x + cubeX, y + cubeY, z + cubeZ);
             Box newBox = cubeGen.getPopulationPregenerationRequirements(fullPopulationCube);
+            if (CubicChunksConfig.useVanillaChunkWorldGenerators) {
+                if (cube.getY() >= 0 && cube.getY() < 16) {
+                    newBox = new Box(
+                            0, -cube.getY(), 0,
+                            0, 16 - cube.getY() - 1, 0
+                    ).add(newBox);
+                }
+            }
             newBox.forEachPoint((nx, ny, nz) -> {
                 int genX = cubeX + x + nx;
                 int genY = cubeY + y + ny;
@@ -443,9 +455,17 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
             // a check for populators that populate more than one cube (vanilla compatibility generator)
             if (!fullPopulationCube.isPopulated()) {
                 cubeGen.populate(fullPopulationCube);
+                fullPopulationCube.setPopulated(true);
             }
         });
-        
+        if (CubicChunksConfig.useVanillaChunkWorldGenerators) {
+            Box.Mutable box = fullPopulation.asMutable();
+            box.setY1(0);
+            box.setY2(0);
+            box.forEachPoint((x, y, z) -> {
+                GameRegistry.generateWorld(cube.getX() + x, cube.getZ() + z, world, chunkGenerator, world.getChunkProvider());
+            });
+        }
         cube.setFullyPopulated(true);
     }
 
@@ -535,7 +555,7 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
             return loaded;
         }
         if (column != null) {
-            id2ChunkMap.put(ChunkPos.asLong(columnX, columnZ), (Chunk) column);
+            loadedChunks.put(ChunkPos.asLong(columnX, columnZ), (Chunk) column);
             column.setLastSaveTime(this.worldServer.getTotalWorldTime()); // the column was just loaded
             column.onLoad();
             return column;
@@ -546,7 +566,7 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
         column = (Chunk) new Chunk((World) worldServer, columnX, columnZ);
         cubeGen.generateColumn(column);
 
-        id2ChunkMap.put(ChunkPos.asLong(columnX, columnZ), (Chunk) column);
+        loadedChunks.put(ChunkPos.asLong(columnX, columnZ), (Chunk) column);
         column.setLastSaveTime(this.worldServer.getTotalWorldTime()); // the column was just generated
         column.onLoad();
         return column;
@@ -554,7 +574,7 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
 
     public String dumpLoadedCubes() {
         StringBuilder sb = new StringBuilder(10000).append("\n");
-        for (Chunk chunk : this.id2ChunkMap.values()) {
+        for (Chunk chunk : this.loadedChunks.values()) {
             if (chunk == null) {
                 sb.append("column = null\n");
                 continue;
@@ -577,7 +597,7 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
         return sb.toString();
     }
 
-    @Nonnull public ICubeIO getCubeIO() {
+    @Override @Nonnull public ICubeIO getCubeIO() {
         return cubeIO;
     }
 
@@ -587,7 +607,7 @@ public class CubeProviderServer extends ChunkProviderServer implements ICubeProv
 
     @SuppressWarnings("unchecked")
     Iterator<Chunk> columnsIterator() {
-        return id2ChunkMap.values().iterator();
+        return loadedChunks.values().iterator();
     }
 
     boolean tryUnloadCube(Cube cube) {

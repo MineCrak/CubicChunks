@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -23,13 +24,11 @@
  */
 package io.github.opencubicchunks.cubicchunks.core.asm.mixin.core.common;
 
-import io.github.opencubicchunks.cubicchunks.core.world.column.CubeMap;
-import io.github.opencubicchunks.cubicchunks.core.world.cube.Cube;
+import io.github.opencubicchunks.cubicchunks.api.world.IColumn;
 import io.github.opencubicchunks.cubicchunks.api.world.ICube;
 import io.github.opencubicchunks.cubicchunks.api.world.IHeightMap;
 import io.github.opencubicchunks.cubicchunks.core.asm.mixin.ICubicWorldInternal;
 import io.github.opencubicchunks.cubicchunks.core.world.column.CubeMap;
-import io.github.opencubicchunks.cubicchunks.api.world.IColumn;
 import io.github.opencubicchunks.cubicchunks.core.world.cube.Cube;
 import mcp.MethodsReturnNonnullByDefault;
 import net.minecraft.world.World;
@@ -37,12 +36,12 @@ import net.minecraft.world.chunk.Chunk;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Implements;
 import org.spongepowered.asm.mixin.Interface;
+import org.spongepowered.asm.mixin.Intrinsic;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 
-import java.util.Collection;
-
 import javax.annotation.ParametersAreNonnullByDefault;
+import java.util.Collection;
 
 /**
  * Implements the IColumn interface
@@ -69,6 +68,11 @@ public abstract class MixinChunk_Column implements IColumn {
     @Shadow @Final private World world;
 
     @Shadow public boolean unloadQueued;
+
+    @Shadow @Final private int[] heightMap;
+
+    @SuppressWarnings({"deprecation", "RedundantSuppression"})
+    @Shadow public abstract int getHeightValue(int x, int z);
 
     @Override public Cube getLoadedCube(int cubeY) {
         if (cachedCube != null && cachedCube.getY() == cubeY) {
@@ -107,6 +111,7 @@ public abstract class MixinChunk_Column implements IColumn {
         return !cubeMap.isEmpty();
     }
 
+    @SuppressWarnings("unchecked")
     public <T extends World & ICubicWorldInternal> T getWorld() {
         return (T) this.world;
     }
@@ -126,17 +131,35 @@ public abstract class MixinChunk_Column implements IColumn {
     }
 
 
-    @Override public Collection getLoadedCubes() {
+    @Override public Collection<? extends ICube> getLoadedCubes() {
         return this.cubeMap.all();
     }
 
 
-    @Override public Iterable getLoadedCubes(int startY, int endY) {
+    @Override public Iterable<? extends ICube> getLoadedCubes(int startY, int endY) {
         return this.cubeMap.cubes(startY, endY);
     }
 
 
     @Override public void preCacheCube(ICube cube) {
         this.cachedCube = (Cube) cube;
+    }
+
+    @Override public int getX() {
+        return x;
+    }
+
+    @Override public int getZ() {
+        return z;
+    }
+
+    @Override
+    public int getHeightValue(int localX, int blockY, int localZ) {
+        return this.heightMap[localZ << 4 | localX];
+    }
+
+    @Intrinsic
+    public int chunk$getHeightValue(int localX, int localZ) {
+        return getHeightValue(localX, localZ);
     }
 }

@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -45,6 +46,10 @@ public class MixinDebugRenderChunkBorder {
     }
 
     /**
+     * @param partialTicks partial ticks
+     * @param  finishTimeNano max time to finish frame to fit into fps limit
+     * @param ci callback info
+     *
      * @author Babbaj
      * @reason Change chunk border renderer to work at any Y value.
      */
@@ -61,7 +66,7 @@ public class MixinDebugRenderChunkBorder {
         double playerX = player.lastTickPosX + (player.posX - player.lastTickPosX) * (double) partialTicks;
         double playerY = player.lastTickPosY + (player.posY - player.lastTickPosY) * (double) partialTicks;
         double playerZ = player.lastTickPosZ + (player.posZ - player.lastTickPosZ) * (double) partialTicks;
-        double yOffset = (Math.round((int) playerY / 16)) * 16 - 128; // Offset the grid's y coord to based on the player's y coord
+        double yOffset = (Math.round(playerY / 16)) * 16 - 128; // Offset the grid's y coord to based on the player's y coord
         double minY = (0.0D - playerY) + yOffset; // add the offset
         double maxY = (256.0D - playerY) + yOffset;
         GlStateManager.disableTexture2D();

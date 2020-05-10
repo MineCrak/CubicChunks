@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -29,7 +30,6 @@ import mcp.MethodsReturnNonnullByDefault;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
-import java.util.Date;
 
 import javax.annotation.ParametersAreNonnullByDefault;
 
@@ -42,21 +42,28 @@ import javax.annotation.ParametersAreNonnullByDefault;
 @MethodsReturnNonnullByDefault
 public class Dbg {
 
-    private static final PrintWriter pw;
+    private static PrintWriter pw;
 
     static {
         if (!CubicChunks.DEBUG_ENABLED) {
             pw = null;
         } else {
-            PrintWriter p;
-            try {
-                p = new PrintWriter(new File("DEBUG_" + new Date()));
-            } catch (FileNotFoundException e) {
-                throw new RuntimeException(e);
-            }
-            pw = p;
-            Runtime.getRuntime().addShutdownHook(new Thread(pw::close));
+            restart();
         }
+    }
+
+    public static void restart() {
+        PrintWriter p;
+        if (pw != null) {
+            pw.close();
+        }
+        try {
+            p = new PrintWriter(new File("DEBUG_" + System.currentTimeMillis()));
+        } catch (FileNotFoundException e) {
+            throw new RuntimeException(e);
+        }
+        pw = p;
+        Runtime.getRuntime().addShutdownHook(new Thread(pw::close));
     }
 
     public static void p(String format, Object... objs) {

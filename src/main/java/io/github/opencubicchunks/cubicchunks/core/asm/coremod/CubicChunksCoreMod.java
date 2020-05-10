@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -44,7 +45,6 @@ import javax.annotation.ParametersAreNonnullByDefault;
 // the mcVersion value is inlined at compile time, so this MC version check may still fail
 @IFMLLoadingPlugin.MCVersion(value = ForgeVersion.mcVersion)
 @IFMLLoadingPlugin.SortingIndex(value = 5000)
-@IFMLLoadingPlugin.TransformerExclusions(value = "cubicchunks.asm.")
 public class CubicChunksCoreMod implements IFMLLoadingPlugin {
 
     public static final class TokenProvider implements IEnvironmentTokenProvider {
@@ -76,7 +76,7 @@ public class CubicChunksCoreMod implements IFMLLoadingPlugin {
 
     @Override
     public String[] getASMTransformerClass() {
-        return new String[]{};
+        return new String[]{"io.github.opencubicchunks.cubicchunks.core.asm.transformer.CubicChunksWorldEditTransformer"};
     }
 
     @Nullable @Override

@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -36,6 +37,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.network.PacketBuffer;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.World;
 import net.minecraftforge.fml.common.network.ByteBufUtils;
 import net.minecraftforge.fml.common.network.simpleimpl.IMessage;
 import net.minecraftforge.fml.common.network.simpleimpl.MessageContext;
@@ -128,10 +130,8 @@ public class PacketCubes implements IMessage {
 
     public static class Handler extends AbstractClientMessageHandler<PacketCubes> {
 
-        @Nullable @Override
-        public IMessage handleClientMessage(EntityPlayer player, PacketCubes message, MessageContext ctx) {
-            PacketUtils.ensureMainThread(this, player, message, ctx);
-
+        @Override
+        public void handleClientMessage(World world, EntityPlayer player, PacketCubes message, MessageContext ctx) {
             WorldClient worldClient = (WorldClient) player.getEntityWorld();
             CubeProviderClient cubeCache = (CubeProviderClient) worldClient.getChunkProvider();
 
@@ -164,11 +164,6 @@ public class PacketCubes implements IMessage {
                     tileEntity.handleUpdateTag(tag);
                 }
             }));
-            return null;
         }
-    }
-
-    private static int index(int x, int z) {
-        return x << 4 | z;
     }
 }

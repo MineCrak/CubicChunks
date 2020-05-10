@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -85,18 +86,6 @@ public abstract class MixinChunk_Cubes implements IColumn {
     private void fillChunk_CubicChunks_NotSupported(PacketBuffer buf, int i, boolean flag, CallbackInfo cbi) {
         if(false)if (isColumn) {
             throw new UnsupportedOperationException("setting storage arrays it not supported with cubic chunks");
-        }
-    }
-
-    // ==============================================
-    //             enqueueRelightChecks
-    // ==============================================
-
-    @Inject(method = "enqueueRelightChecks", at = @At(value = "HEAD"), cancellable = true)
-    private void enqueueRelightChecks_CubicChunks_NotSupported(CallbackInfo cbi) {
-        if (isColumn) {
-            // todo: enqueueRelightChecks
-            cbi.cancel();
         }
     }
 }

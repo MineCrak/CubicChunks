@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -24,7 +25,6 @@
 package io.github.opencubicchunks.cubicchunks.core.asm.mixin.core.server;
 
 import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
-import io.github.opencubicchunks.cubicchunks.core.util.AddressTools;
 import mcp.MethodsReturnNonnullByDefault;
 import net.minecraft.server.dedicated.DedicatedServer;
 import org.spongepowered.asm.mixin.Mixin;
@@ -46,6 +46,6 @@ public class MixinDedicatedServer_HeightLimits {
      */
     @ModifyConstant(method = "init", constant = @Constant(intValue = 256), require = 2)
     private int getDefaultBuildHeight(int oldValue) {
-        return CubicChunks.MAX_BLOCK_Y + 1;
+        return CubicChunks.MAX_SUPPORTED_BLOCK_Y + 1;
     }
 }

@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -32,6 +33,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
 import mcp.MethodsReturnNonnullByDefault;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLiving;
@@ -79,7 +81,7 @@ public abstract class MixinPathNavigate {
         return new ChunkCache(worldIn, new BlockPos(Math.min(x1, x2), Math.min(y1, y2), Math.min(z1, z2)),
                 new BlockPos(Math.max(x1, x2), Math.max(y1, y2), Math.max(z1, z2)), 4);
     }
-
+    
     @Inject(method = "pathFollow", at = @At("HEAD"))
     private void pathFollowInitWalkNodeProcessor(CallbackInfo ci) {
         Vec3d vec1 = this.getEntityPosition();
@@ -90,9 +92,31 @@ public abstract class MixinPathNavigate {
         int x2 = (int) vec2.x;
         int y2 = (int) vec2.y;
         int z2 = (int) vec2.z;
+        int maxChacheSize = 256;
+        if (x2 - x1 > maxChacheSize) {
+            CubicChunks.LOGGER.warn("ChunkCache X size requested by WalkNodeProcessor is too big! Capped to " + maxChacheSize);
+            x2 = x1 + maxChacheSize;
+        } else if (x1 - x2 > maxChacheSize) {
+            CubicChunks.LOGGER.warn("ChunkCache X size requested by WalkNodeProcessor is too big! Capped to " + maxChacheSize);
+            x2 = x1 - maxChacheSize;
+        }
+        if (z2 - z1 > maxChacheSize) {
+            CubicChunks.LOGGER.warn("ChunkCache Z size requested by WalkNodeProcessor is too big! Capped to " + maxChacheSize);
+            z2 = z1 + maxChacheSize;
+        } else if (z1 - z2 > maxChacheSize) {
+            CubicChunks.LOGGER.warn("ChunkCache Z size requested by WalkNodeProcessor is too big! Capped to " + maxChacheSize);
+            z2 = z1 - maxChacheSize;
+        }
+        if (y2 - y1 > maxChacheSize) {
+            CubicChunks.LOGGER.warn("ChunkCache Y size requested by WalkNodeProcessor is too big! Capped to " + maxChacheSize);
+            y2 = y1 + maxChacheSize;
+        } else if (y1 - y2 > maxChacheSize) {
+            CubicChunks.LOGGER.warn("ChunkCache Y size requested by WalkNodeProcessor is too big! Capped to " + maxChacheSize);
+            y2 = y1 - maxChacheSize;
+        }
         ChunkCache chunkCache = new ChunkCache(world, new BlockPos(Math.min(x1, x2), Math.min(y1, y2), Math.min(z1, z2)),
                 new BlockPos(Math.max(x1, x2), Math.max(y1, y2), Math.max(z1, z2)), 4);
-        this.nodeProcessor.initProcessor(chunkCache, entity);
+        this.nodeProcessor.init(chunkCache, entity);
     }
 
     @Inject(method = "pathFollow", at = @At("RETURN"))

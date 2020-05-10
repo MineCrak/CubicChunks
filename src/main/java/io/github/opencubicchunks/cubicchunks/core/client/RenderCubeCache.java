@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -192,6 +193,7 @@ public class RenderCubeCache extends ChunkCache {
         }
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public boolean isSideSolid(BlockPos pos, EnumFacing side, boolean defaultValue) {
         if (world.isOutsideBuildHeight(pos)) {

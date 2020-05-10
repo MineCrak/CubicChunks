@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -23,12 +24,15 @@
  */
 package io.github.opencubicchunks.cubicchunks.core.util;
 
+import it.unimi.dsi.fastutil.objects.Object2IntMap;
+import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
+
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.Iterator;
-import java.util.Set;
 import java.util.function.Predicate;
+
+import javax.annotation.Nonnull;
 
 /**
  * Helper class to delay removing of an elements. Created and used to reduce CPU
@@ -52,39 +56,43 @@ public class WatchersSortingList<T> implements Iterable<T> {
      * Size of a list. Used to limit accessible members of data array during
      * sorting and iteration.
      */
-    private int size = 0;
+    private int size = 0, removed = 0;
     /**
      * Contain all data without certain order. Used to detect if element is
      * already added
      */
-    private final Set<T> dataAsSet = new HashSet<T>();
-    /** Contain elements which will be removed during tick event */
-    private final Set<T> toRemove = new HashSet<T>();
+    private final Object2IntMap<T> indexMap = new Object2IntOpenHashMap<>();
 
     public WatchersSortingList(Comparator<T> orderIn) {
-        order = new Comparator<T>() {
-
-            // With this trick we can drop removed elements to the end of a list.
-            @Override
-            public int compare(T o1, T o2) {
-                boolean o1Removed = toRemove.contains(o1);
-                boolean o2Removed = toRemove.contains(o2);
-                if(o1Removed && o2Removed)
-                    return 0;
-                if(o1Removed)
-                    return Integer.MAX_VALUE;
-                if(o2Removed)
-                    return Integer.MIN_VALUE;
-                return orderIn.compare(o1, o2);
-            }};
+        indexMap.defaultReturnValue(-1);
+        // With this trick we can drop removed elements to the end of a list.
+        order = (o1, o2) -> {
+            boolean o1Removed = o1 == null;
+            boolean o2Removed = o2 == null;
+            if(o1Removed && o2Removed)
+                return 0;
+            if(o1Removed)
+                return Integer.MAX_VALUE;
+            if(o2Removed)
+                return Integer.MIN_VALUE;
+            return orderIn.compare(o1, o2);
+        };
     }
 
     /** Sort and remove dead elements */
     public void sort() {
         Arrays.sort((T[]) data, start, start + size, order);
-        size-=toRemove.size();
-        dataAsSet.removeAll(toRemove);
-        toRemove.clear();
+        int newSize = Integer.MIN_VALUE;
+        for (int i = start; i <= start + size; i++) {
+            if (data[i] == null) {
+                newSize = i - start;
+                break;
+            }
+            indexMap.put((T) data[i], i);
+        }
+        assert newSize != Integer.MIN_VALUE;
+        size = newSize;
+        removed = 0;
     }
 
     /**
@@ -94,9 +102,7 @@ public class WatchersSortingList<T> implements Iterable<T> {
      * @return if list contain any accessible data
      */
     public boolean isEmpty() {
-        int amount = size - toRemove.size();
-        assert (amount >= 0);
-        return amount == 0;
+        return size - removed == 0;
     }
 
     /**
@@ -106,6 +112,7 @@ public class WatchersSortingList<T> implements Iterable<T> {
      * 
      * @return iterator over elements
      */
+    @Nonnull @Override
     public Iterator<T> iterator() {
         return new Iterator<T>() {
 
@@ -116,7 +123,7 @@ public class WatchersSortingList<T> implements Iterable<T> {
             private void peekNext() {
                 while (next == null && i < start + size) {
                     T e = (T) data[i++];
-                    if (!toRemove.contains(e)) {
+                    if (e != null) {
                         next = e;
                     }
                 }
@@ -140,72 +147,85 @@ public class WatchersSortingList<T> implements Iterable<T> {
 
             @Override
             public void remove() {
-                toRemove.add(prev);
+                WatchersSortingList.this.remove(prev);
             }
         };
     }
 
     /**
      * Schedule element to be removed if it is contained in list.
+     *
+     * @param entry entry to remove
      */
     public void remove(T entry) {
-        if(dataAsSet.contains(entry))
-            toRemove.add(entry);
+        int idx = indexMap.removeInt(entry);
+        if (idx >= 0) {
+            data[idx] = null;
+            removed++;
+        }
     }
 
     /**
      * Remove such elements {@code a} whom return {@code true} on call
      * {@code predicate.test(a)} from that list immediately.
+     *
+     * @param predicate a predicate matching entries to remove
      */
     public void removeIf(Predicate<T> predicate) {
         for (int i = start; i < start + size; i++) {
             T a = (T) data[i];
+            if (a == null) {
+                continue;
+            }
             if (predicate.test(a)) {
-                toRemove.add(a);
+                indexMap.remove(a);
+                data[i] = null;
+                removed++;
             }
         }
     }
 
     /**
      * Append element to start of a list.
-     * 
+     *
+     * @param element element to add
      * @throws NullPointerException in attempt to add {@code null}.
      * @throws IllegalArgumentException if list already contain such element.
      */
     public void appendToStart(T element) {
         if (element == null)
             throw new NullPointerException("This list does not allow null elements.");
-        // A rare case when we should use &. We need to remove element from list
-        // of a dead AND we need to add it to data set and check both sets before throwing exception.
-        if(!toRemove.remove(element) & !dataAsSet.add(element))
-            throw new IllegalArgumentException("List already contain element " + element.toString());
         if (start <= 0)
             grow();
         --start;
         data[start] = element;
+        indexMap.put(element, start);
         size++;
     }
 
     /**
      * Add element to an end of list.
-     * 
+     *
+     * @param element element to add
      * @throws NullPointerException in attempt to add {@code null}.
      * @throws IllegalArgumentException if list already contain such element.
      */
     public void appendToEnd(T element) {
         if (element == null)
             throw new NullPointerException("This list does not allow null elements.");
-        if(!toRemove.remove(element) & !dataAsSet.add(element))
-            throw new IllegalArgumentException("List already contain element " + element.toString());
         if (start + size >= this.data.length)
             grow();
         data[start + size] = element;
+        indexMap.put(element, start + size);
         size++;
     }
     
-    /** @return {@code true} if list contains element. */
+    /**
+     * @param element element to check
+     * @return {@code true} if list contains element.
+     */
     public boolean contains(T element) {
-        return dataAsSet.contains(element) && !toRemove.contains(element);
+        return indexMap.containsKey(element);
     }
 
     private void grow() {
@@ -214,14 +234,19 @@ public class WatchersSortingList<T> implements Iterable<T> {
         System.arraycopy(data, start, newData, newStart, size);
         data = newData;
         start = newStart;
+        for (int i = start; i < start + size; i++) {
+            if (data[i] != null) {
+                indexMap.put((T) data[i], i);
+            }
+        }
     }
     
     @Override
     public String toString(){
-        StringBuffer sb = new StringBuffer();
+        StringBuilder sb = new StringBuilder();
         sb.append("[");
-        for (int i = 0; i < data.length; i++) {
-            sb.append(data[i]+",");
+        for (Object datum : data) {
+            sb.append(datum).append(",");
         }
         sb.append("]");
         return sb.toString();

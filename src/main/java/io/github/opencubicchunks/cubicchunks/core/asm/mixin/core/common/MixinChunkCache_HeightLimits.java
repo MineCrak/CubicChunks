@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -55,6 +56,14 @@ public class MixinChunkCache_HeightLimits {
 
     @ModifyConstant(method = "getBlockState", constant = @Constant(intValue = 256))
     private int getBlockState_getMaxHeight(int orig) {
+        return ((ICubicWorld) world).getMaxHeight();
+    }
+    
+    public int getMinHeight() {
+        return ((ICubicWorld) world).getMinHeight();
+    }
+
+    public int getMaxHeight() {
         return ((ICubicWorld) world).getMaxHeight();
     }
 }

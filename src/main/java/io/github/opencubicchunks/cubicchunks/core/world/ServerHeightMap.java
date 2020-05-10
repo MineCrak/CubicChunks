@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -23,10 +24,9 @@
  */
 package io.github.opencubicchunks.cubicchunks.core.world;
 
-import io.github.opencubicchunks.cubicchunks.core.world.cube.Cube;
+import io.github.opencubicchunks.cubicchunks.api.util.Coords;
 import io.github.opencubicchunks.cubicchunks.api.world.IHeightMap;
 import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
-import io.github.opencubicchunks.cubicchunks.api.util.Coords;
 import io.github.opencubicchunks.cubicchunks.core.world.cube.Cube;
 import mcp.MethodsReturnNonnullByDefault;
 
@@ -69,14 +69,6 @@ public class ServerHeightMap implements IHeightMap {
 
     private int heightMapLowest;
 
-    private int hash;
-
-    private boolean needsHash;
-
-    public ServerHeightMap() {
-        this(new int[Cube.SIZE * Cube.SIZE]);
-    }
-
     public ServerHeightMap(int[] heightmap) {
         this.ymin = new int[Cube.SIZE * Cube.SIZE];
         this.ymax = new HeightMap(heightmap);
@@ -90,8 +82,6 @@ public class ServerHeightMap implements IHeightMap {
         }
 
         this.heightMapLowest = Coords.NO_HEIGHT;
-        this.hash = 0;
-        this.needsHash = true;
     }
 
 
@@ -123,7 +113,7 @@ public class ServerHeightMap implements IHeightMap {
 
     @Override
     public void onOpacityChange(int localX, int blockY, int localZ, int opacity) {
-        if (blockY > CubicChunks.MAX_BLOCK_Y || blockY < CubicChunks.MIN_BLOCK_Y) {
+        if (blockY > CubicChunks.MAX_SUPPORTED_BLOCK_Y || blockY < CubicChunks.MIN_SUPPORTED_BLOCK_Y) {
             return;
         }
         int xzIndex = getIndex(localX, localZ);
@@ -137,7 +127,6 @@ public class ServerHeightMap implements IHeightMap {
         }
 
         this.heightMapLowest = Coords.NO_HEIGHT;
-        this.needsHash = true;
     }
 
     @Override
@@ -736,35 +725,6 @@ public class ServerHeightMap implements IHeightMap {
 
     private static int getIndex(int localX, int localZ) {
         return (localZ << 4) | localX;
-    }
-
-    @Override
-    public int hashCode() {
-        if (this.needsHash) {
-            this.hash = computeHash();
-            this.needsHash = false;
-        }
-        return hash;
-    }
-
-    private int computeHash() {
-        final int MyFavoritePrime = 37;
-        int hash = 1;
-        for (int i = 0; i < this.segments.length; i++) {
-            hash *= MyFavoritePrime;
-            hash += this.ymin[i];
-            hash *= MyFavoritePrime;
-            hash += this.ymax.get(i);
-            if (this.segments[i] == null) {
-                hash *= MyFavoritePrime;
-            } else {
-                for (int n : this.segments[i]) {
-                    hash *= MyFavoritePrime;
-                    hash += n;
-                }
-            }
-        }
-        return hash;
     }
 
     // Serialization / NBT ---------------------------------------------------------------------------------------------

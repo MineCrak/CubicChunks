@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -30,6 +31,7 @@ import net.minecraft.entity.Entity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.World;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -49,7 +51,7 @@ import javax.annotation.ParametersAreNonnullByDefault;
 @Mixin(World.class)
 public abstract class MixinWorld_Tick implements ICubicWorld {
 
-    @Shadow public boolean isRemote;
+    @Shadow @Final public boolean isRemote;
 
     private int updateEntity_entityPosY;
     private int updateEntity_entityPosX;
@@ -59,6 +61,8 @@ public abstract class MixinWorld_Tick implements ICubicWorld {
     @Shadow private boolean isAreaLoaded(int x1, int y1, int z1, int x2, int y2, int z2, boolean allowEmpty) {
         throw new Error();
     }
+
+    @Shadow public abstract boolean isValid(BlockPos pos);
 
     /**
      * Redirect {@code isAreaLoaded} here, to use Y coordinate of the entity.
@@ -77,20 +81,27 @@ public abstract class MixinWorld_Tick implements ICubicWorld {
         }
 
         BlockPos entityPos = new BlockPos(updateEntity_entityPosX, updateEntity_entityPosY, updateEntity_entityPosZ);
+        if (!isValid(entityPos)) {
+            return true; // can tick everything outside of limits
+        }
+        int r = (endBlockX - startBlockX) >> 1;
 
-        return this.isRemote ||
-                MixinUtils.canTickPosition((World) (Object) this, entityPos, cube -> cube.getTickets().shouldTick());
+        return isAreaLoaded(updateEntity_entityPosX - r, updateEntity_entityPosY - r, updateEntity_entityPosZ - r,
+                updateEntity_entityPosX + r, updateEntity_entityPosY + r, updateEntity_entityPosZ + r, true);
     }
 
     /**
      * Allows to get Y position of the updated entity.
+     *
+     * @param entity entity to update
+     * @param force true if normal chunk area loaded checks should be ignored
+     * @param ci callback info
      */
     @Group(name = "updateEntity")
     @Inject(method = "updateEntityWithOptionalForce",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/World;getPersistentChunks()Lcom/google/common/collect/ImmutableSetMultimap;", remap = false),
-            locals = LocalCapture.CAPTURE_FAILHARD,
             require = 1)
-    public void onIsAreaLoadedForUpdateEntityWithOptionalForce(Entity entity, boolean force, CallbackInfo ci, int i, int j) {
+    public void onIsAreaLoadedForUpdateEntityWithOptionalForce(Entity entity, boolean force, CallbackInfo ci) {
         updateEntity_entityPosY = MathHelper.floor(entity.posY);
         updateEntity_entityPosX = MathHelper.floor(entity.posX);
         updateEntity_entityPosZ = MathHelper.floor(entity.posZ);

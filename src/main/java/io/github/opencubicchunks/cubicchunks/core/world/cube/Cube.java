@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -23,21 +24,26 @@
  */
 package io.github.opencubicchunks.cubicchunks.core.world.cube;
 
-import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
-import io.github.opencubicchunks.cubicchunks.api.worldgen.CubePrimer;
-import io.github.opencubicchunks.cubicchunks.api.world.ICube;
-import io.github.opencubicchunks.cubicchunks.api.worldgen.ICubeGenerator;
-import io.github.opencubicchunks.cubicchunks.api.world.ICubicWorld;
-import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
-import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
-import io.github.opencubicchunks.cubicchunks.core.util.AddressTools;
+import io.github.opencubicchunks.cubicchunks.api.util.Coords;
 import io.github.opencubicchunks.cubicchunks.api.util.CubePos;
+import io.github.opencubicchunks.cubicchunks.api.world.CubeEvent;
+import io.github.opencubicchunks.cubicchunks.api.world.IColumn;
+import io.github.opencubicchunks.cubicchunks.api.world.ICube;
+import io.github.opencubicchunks.cubicchunks.api.world.ICubicWorld;
+import io.github.opencubicchunks.cubicchunks.api.world.IHeightMap;
+import io.github.opencubicchunks.cubicchunks.api.worldgen.CubePrimer;
+import io.github.opencubicchunks.cubicchunks.api.worldgen.ICubeGenerator;
+import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
+import io.github.opencubicchunks.cubicchunks.core.asm.mixin.ICubicWorldInternal;
+import io.github.opencubicchunks.cubicchunks.core.lighting.LightingManager;
+import io.github.opencubicchunks.cubicchunks.core.server.CubeWatcher;
+import io.github.opencubicchunks.cubicchunks.core.server.SpawnCubes;
+import io.github.opencubicchunks.cubicchunks.core.util.AddressTools;
+import io.github.opencubicchunks.cubicchunks.core.util.CompatHandler;
 import io.github.opencubicchunks.cubicchunks.core.util.ticket.ITicket;
 import io.github.opencubicchunks.cubicchunks.core.util.ticket.TicketList;
 import io.github.opencubicchunks.cubicchunks.core.world.EntityContainer;
-import io.github.opencubicchunks.cubicchunks.api.world.IHeightMap;
-import io.github.opencubicchunks.cubicchunks.api.world.IColumn;
-import io.github.opencubicchunks.cubicchunks.core.asm.mixin.ICubicWorldInternal;
+import io.github.opencubicchunks.cubicchunks.core.world.chunkloader.ICubicTicketInternal;
 import mcp.MethodsReturnNonnullByDefault;
 import net.minecraft.block.Block;
 import net.minecraft.block.material.Material;
@@ -49,29 +55,28 @@ import net.minecraft.util.ClassInheritanceMultiMap;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.EnumSkyBlock;
-import net.minecraft.world.NextTickListEntry;
 import net.minecraft.world.World;
-import net.minecraft.world.WorldServer;
+import net.minecraft.world.biome.Biome;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
-
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Random;
-import java.util.Set;
-import java.util.TreeSet;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.function.BooleanSupplier;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.common.capabilities.Capability;
+import net.minecraftforge.common.capabilities.CapabilityDispatcher;
+import net.minecraftforge.event.AttachCapabilitiesEvent;
+import net.minecraftforge.event.world.ChunkEvent;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
-
-import org.apache.logging.log4j.LogManager;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.BooleanSupplier;
 
 import static io.github.opencubicchunks.cubicchunks.api.util.Coords.*;
+import static net.minecraftforge.common.MinecraftForge.EVENT_BUS;
 
 /**
  * A cube is our extension of minecraft's chunk system to three dimensions. Each cube encloses a cubic area in the world
@@ -81,16 +86,17 @@ import static io.github.opencubicchunks.cubicchunks.api.util.Coords.*;
 @MethodsReturnNonnullByDefault
 public class Cube implements ICube {
 
-    @Nullable protected static final ExtendedBlockStorage NULL_STORAGE = null;
+    @Nullable
+    protected static final ExtendedBlockStorage NULL_STORAGE = null;
 
-    private final Set<NextTickListEntry> pendingTickListEntriesHashSet = new HashSet<NextTickListEntry>();
-    private final TreeSet<NextTickListEntry> pendingTickListEntriesTreeSet = new TreeSet<NextTickListEntry>();
-
+    @Nullable
+    private byte[] blockBiomeArray = null;
 
     /**
      * Tickets keep this chunk loaded and ticking. See the docs of {@link TicketList} and {@link ITicket} for additional information.
      */
-    @Nonnull private final TicketList tickets; // tickets prevent this Cube from being unloaded
+    @Nonnull
+    private final TicketList tickets; // tickets prevent this Cube from being unloaded
     /**
      * Has anything within the cube changed since it was loaded from disk?
      */
@@ -116,31 +122,38 @@ public class Cube implements ICube {
     /**
      * The world of this cube
      */
-    @Nonnull private final World world;
+    @Nonnull
+    private final World world;
     /**
      * The column of this cube
      */
-    @Nonnull private final Chunk column;
+    @Nonnull
+    private final Chunk column;
     /**
      * The position of this cube, in cube space
      */
-    @Nonnull private final CubePos coords;
+    @Nonnull
+    private final CubePos coords;
     /**
      * Blocks in this cube
      */
-    @Nullable private ExtendedBlockStorage storage;
+    @Nullable
+    private ExtendedBlockStorage storage;
     /**
      * Entities in this cube
      */
-    @Nonnull private final EntityContainer entities;
+    @Nonnull
+    private final EntityContainer entities;
     /**
      * The position of tile entities in this cube, and their corresponding tile entity
      */
-    @Nonnull private final Map<BlockPos, TileEntity> tileEntityMap;
+    @Nonnull
+    private final Map<BlockPos, TileEntity> tileEntityMap;
     /**
      * The positions of tile entities queued for creation
      */
-    @Nonnull private final ConcurrentLinkedQueue<BlockPos> tileEntityPosQueue;
+    @Nonnull
+    private final ConcurrentLinkedQueue<BlockPos> tileEntityPosQueue;
 
     private final LightingManager.CubeLightUpdateInfo cubeLightUpdateInfo;
 
@@ -160,20 +173,33 @@ public class Cube implements ICube {
      * True only if all the blocks have been added to server height map. Always true clientside.
      */
     private boolean isSurfaceTracked = true;
+    private boolean ticked = false;
+
+    /**
+     * This is used as an optimization to avoid putting all the cubes to tick in a set (which turns out to be very slow because of huge amount of
+     * cubes), or iterating over all loaded cubes, which can also be very expensive in case of very big render distance, where not many cubes are
+     * actually ticked, but hundreds of thousands of them can be loaded.
+     * <p>
+     * Instead, cubes for players are added into a simple arraylist, and forced cubes are iterated separately, and double-ticking is avoided by
+     * checking this lastTicked field instead of deduplication by putting them all into a Set.
+     */
+    private long lastTicked = Long.MIN_VALUE;
+
+    private final CapabilityDispatcher capabilities;
 
     /**
      * Create a new cube in the specified column at the specified location. The newly created cube will only contain air
      * blocks.
      *
      * @param column column of this cube
-     * @param cubeY cube y position
+     * @param cubeY  cube y position
      */
     public Cube(Chunk column, int cubeY) {
         this.world = column.getWorld();
         this.column = column;
         this.coords = new CubePos(column.x, cubeY, column.z);
 
-        this.tickets = new TicketList();
+        this.tickets = new TicketList(this);
 
         this.entities = new EntityContainer();
         this.tileEntityMap = new HashMap<>();
@@ -182,13 +208,17 @@ public class Cube implements ICube {
         this.cubeLightUpdateInfo = ((ICubicWorldInternal) world).getLightingManager().createCubeLightUpdateInfo(this);
 
         this.storage = NULL_STORAGE;
+
+        AttachCapabilitiesEvent<ICube> event = new AttachCapabilitiesEvent<>(ICube.class, this);
+        MinecraftForge.EVENT_BUS.post(event);
+        this.capabilities = event.getCapabilities().size() > 0 ? new CapabilityDispatcher(event.getCapabilities(), null) : null;
     }
 
     /**
      * Create a new cube at the specified location by copying blocks from a cube primer.
      *
      * @param column column of this cube
-     * @param cubeY cube y position
+     * @param cubeY  cube y position
      * @param primer primer containing the blocks for this cube
      */
     @SuppressWarnings("deprecation") // when a block is generated, does it really have any extra
@@ -199,10 +229,9 @@ public class Cube implements ICube {
         int miny = cubeToMinBlock(cubeY);
         IHeightMap opindex = ((IColumn) column).getOpacityIndex();
 
-        for (int x = 0; x < Cube.SIZE; x++) {
+        for (int y = Cube.SIZE - 1; y >= 0; y--) {
             for (int z = 0; z < Cube.SIZE; z++) {
-
-                for (int y = Cube.SIZE - 1; y >= 0; y--) {
+                for (int x = 0; x < Cube.SIZE; x++) {
                     IBlockState newstate = primer.getBlockState(x, y, z);
 
                     if (newstate.getMaterial() != Material.AIR) {
@@ -219,6 +248,15 @@ public class Cube implements ICube {
                 }
             }
         }
+        if (primer.hasBiomes()) {
+            for (int biomeX = 0; biomeX < 8; biomeX++) {
+                for (int biomeZ = 0; biomeZ < 8; biomeZ++) {
+                    int primerBiomeX = biomeX / 2;
+                    int primerBiomeZ = biomeZ / 2;
+                    setBiome(biomeX, biomeZ, primer.getBiome(primerBiomeX, 0, primerBiomeZ));
+                }
+            }
+        }
         isSurfaceTracked = true;
         isModified = true;
     }
@@ -226,11 +264,21 @@ public class Cube implements ICube {
 
     /**
      * Constructor to be used from subclasses to provide all field values
+     *
+     * @param tickets cube ticket list
+     * @param world the world instance
+     * @param column the column this cube belongs to
+     * @param coords position of this cube
+     * @param storage block storage
+     * @param entities entity container
+     * @param tileEntityMap tile entity storage
+     * @param tileEntityPosQueue queue for updating tile entities
+     * @param lightInfo lighting info storage
      */
-    protected Cube(TicketList tickers, World world, Chunk column, CubePos coords, ExtendedBlockStorage storage,
-            EntityContainer entities, Map<BlockPos, TileEntity> tileEntityMap,
-            ConcurrentLinkedQueue<BlockPos> tileEntityPosQueue, LightingManager.CubeLightUpdateInfo lightInfo) {
-        this.tickets = tickers;
+    protected Cube(TicketList tickets, World world, Chunk column, CubePos coords, ExtendedBlockStorage storage,
+                   EntityContainer entities, Map<BlockPos, TileEntity> tileEntityMap,
+                   ConcurrentLinkedQueue<BlockPos> tileEntityPosQueue, LightingManager.CubeLightUpdateInfo lightInfo) {
+        this.tickets = tickets;
         this.world = world;
         this.column = column;
         this.coords = coords;
@@ -239,32 +287,43 @@ public class Cube implements ICube {
         this.tileEntityMap = tileEntityMap;
         this.tileEntityPosQueue = tileEntityPosQueue;
         this.cubeLightUpdateInfo = lightInfo;
+
+        AttachCapabilitiesEvent<ICube> event = new AttachCapabilitiesEvent<>(ICube.class, this);
+        MinecraftForge.EVENT_BUS.post(event);
+        this.capabilities = event.getCapabilities().size() > 0 ? new CapabilityDispatcher(event.getCapabilities(), null) : null;
+
     }
 
     //======================================
     //========Chunk vanilla methods=========
     //======================================
 
-    @Override public IBlockState getBlockState(BlockPos pos) {
+    @Override
+    public IBlockState getBlockState(BlockPos pos) {
         return this.getBlockState(pos.getX(), pos.getY(), pos.getZ());
     }
 
-    @Override @Nullable public IBlockState setBlockState(BlockPos pos, IBlockState newstate) {
+    @Override
+    @Nullable
+    public IBlockState setBlockState(BlockPos pos, IBlockState newstate) {
         return column.setBlockState(pos, newstate);
     }
 
-    @Override public IBlockState getBlockState(int blockX, int localOrBlockY, int blockZ) {
+    @Override
+    public IBlockState getBlockState(int blockX, int localOrBlockY, int blockZ) {
         if (storage == NULL_STORAGE) {
             return Blocks.AIR.getDefaultState();
         }
         return storage.get(blockToLocal(blockX), blockToLocal(localOrBlockY), blockToLocal(blockZ));
     }
 
-    @Override public int getLightFor(EnumSkyBlock lightType, BlockPos pos) {
+    @Override
+    public int getLightFor(EnumSkyBlock lightType, BlockPos pos) {
         return column.getLightFor(lightType, pos);
     }
 
-    @Override public void setLightFor(EnumSkyBlock lightType, BlockPos pos, int light) {
+    @Override
+    public void setLightFor(EnumSkyBlock lightType, BlockPos pos, int light) {
         column.setLightFor(lightType, pos, light);
     }
 
@@ -272,7 +331,6 @@ public class Cube implements ICube {
      * Create a tile entity at the given position if the block is able to hold one
      *
      * @param pos position where the tile entity should be placed
-     *
      * @return the created tile entity, or <code>null</code> if the block at that position does not provide tile
      * entities
      */
@@ -287,12 +345,37 @@ public class Cube implements ICube {
         return null;
     }
 
-    @Override @Nullable public TileEntity getTileEntity(BlockPos pos, Chunk.EnumCreateEntityType createType) {
+    @Override
+    @Nullable
+    public TileEntity getTileEntity(BlockPos pos, Chunk.EnumCreateEntityType createType) {
         return column.getTileEntity(pos, createType);
     }
 
-    @Override public void addTileEntity(TileEntity tileEntity) {
-        column.addTileEntity(tileEntity);
+    // have a copy of addTileEntity in Cube because sometimes some mods will access blocks from outside of
+    // the cube being loaded while loading it's tile entity, causing a StackOverflowError when the cube set at
+    // the start of loading TEs in column gets changed.
+    @Override
+    public void addTileEntity(TileEntity tileEntityIn) {
+        this.addTileEntity(tileEntityIn.getPos(), tileEntityIn);
+        if (this.isCubeLoaded) {
+            this.world.addTileEntity(tileEntityIn);
+        }
+    }
+
+    private void addTileEntity(BlockPos pos, TileEntity tileEntityIn) {
+        if (tileEntityIn.getWorld() != this.world) { //Forge don't call unless it's changed, could screw up bad mods.
+            tileEntityIn.setWorld(this.world);
+        }
+        tileEntityIn.setPos(pos);
+
+        if (this.getBlockState(pos).getBlock().hasTileEntity(this.getBlockState(pos))) {
+            if (this.tileEntityMap.containsKey(pos)) {
+                this.tileEntityMap.get(pos).invalidate();
+            }
+
+            tileEntityIn.validate();
+            this.tileEntityMap.put(pos, tileEntityIn);
+        }
     }
 
     /**
@@ -301,6 +384,7 @@ public class Cube implements ICube {
      * @param tryToTickFaster Whether costly calculations should be skipped in order to catch up with ticks
      */
     public void tickCubeCommon(BooleanSupplier tryToTickFaster) {
+        this.ticked = true;
         while (!this.tileEntityPosQueue.isEmpty()) {
             BlockPos blockpos = this.tileEntityPosQueue.poll();
 
@@ -315,15 +399,16 @@ public class Cube implements ICube {
             }
         }
 
-        if (!tryToTickFaster.getAsBoolean() && this.cubeLightUpdateInfo != null) {
+        if (this.cubeLightUpdateInfo != null && this.cubeLightUpdateInfo.hasUpdates() && !tryToTickFaster.getAsBoolean()) {
             this.cubeLightUpdateInfo.tick();
         }
     }
 
     /**
      * Tick this cube on server side. Block tick updates launched here.
+     *
      * @param tryToTickFaster - returns true when running out of reserved tick time
-     * @param rand - World specific Random
+     * @param rand            - World specific Random
      */
     public void tickCubeServer(BooleanSupplier tryToTickFaster, Random rand) {
         if (!isFullyPopulated) {
@@ -331,111 +416,110 @@ public class Cube implements ICube {
         }
 
         tickCubeCommon(tryToTickFaster);
-
-        Iterator<NextTickListEntry> pti = pendingTickListEntriesTreeSet.iterator();
-        while (pti.hasNext()) {
-            NextTickListEntry ntle = pti.next();
-            if (ntle.scheduledTime > world.getTotalWorldTime())
-                return;
-            BlockPos pos = ntle.position;
-            IBlockState iblockstate = this.storage.get(blockToLocal(pos.getX()), blockToLocal(pos.getY()), blockToLocal(pos.getZ()));
-            if (iblockstate.getMaterial() != Material.AIR && iblockstate.getBlock() == ntle.getBlock()) {
-                iblockstate.getBlock().updateTick((WorldServer) world, ntle.position, iblockstate, rand);
-            }
-            pti.remove();
-        }
-        int tickLimit = 256; // 16x16 per cube per tick will be enough
-        pti = pendingTickListEntriesHashSet.iterator();
-        while (pti.hasNext() && --tickLimit != 0) {
-            NextTickListEntry ntle = pti.next();
-            pendingTickListEntriesTreeSet.add(ntle);
-            pti.remove();
-        }
     }
 
     /**
-     * Launch random ticks of a blocks of a cube. Plant growing and other events goes here.
-     * @param worldServer - world where random tick is launched
-     * @param rand - World specific Random
+     * @return biome or null if {@link #blockBiomeArray} is not generated by
+     * cube generator
      */
-    public void randomTick(WorldServer worldServer, Random rand) {
-        this.updateLCG = this.updateLCG * 3 + 1013904223;
-        int j1 = updateLCG >> 2;
-        int localX = AddressTools.getLocalX(j1);
-        int localY = AddressTools.getLocalY(j1);
-        int localZ = AddressTools.getLocalZ(j1);
-        IBlockState iblockstate = this.storage.get(localX, localY, localZ);
-        Block block = iblockstate.getBlock();
-        if (block.getTickRandomly()) {
-            BlockPos pos = new BlockPos(this.coords.getMinBlockX() + localX, this.coords.getMinBlockY() + localY, this.coords.getMinBlockZ() + localZ);
-            block.randomTick(worldServer, pos, iblockstate, rand);
-        }
+    @Override
+    public Biome getBiome(BlockPos pos) {
+        if (this.blockBiomeArray == null)
+            return this.getColumn().getBiome(pos, world.getBiomeProvider());
+        int biomeX = Coords.blockToBiome(pos.getX());
+        int biomeZ = Coords.blockToBiome(pos.getZ());
+        int biomeId = this.blockBiomeArray[AddressTools.getBiomeAddress(biomeX, biomeZ)] & 255;
+        Biome biome = Biome.getBiome(biomeId);
+        return biome;
     }
 
-    public void scheduleUpdate(BlockPos pos, Block blockIn, int delay, int priority) {
-        if (pos instanceof BlockPos.MutableBlockPos || pos instanceof BlockPos.PooledMutableBlockPos) {
-            pos = new BlockPos(pos);
-            LogManager.getLogger().warn((String) "Tried to assign a mutable BlockPos to tick data...",
-                    (Throwable) (new Error(pos.getClass().toString())));
-        }
-        if (((ICubicWorld) world).getCubeCache().getLoadedCube(CubePos.fromBlockCoords(pos)) != null) {
-            NextTickListEntry nextticklistentry = new NextTickListEntry(pos, blockIn);
-            nextticklistentry.setScheduledTime((long) delay + world.getTotalWorldTime());
-            nextticklistentry.setPriority(priority);
-            this.pendingTickListEntriesHashSet.add(nextticklistentry);
-        }
+    @SuppressWarnings({"deprecation", "RedundantSuppression"})
+    @Override
+    public void setBiome(int localBiomeX, int localBiomeZ, Biome biome) {
+        if (this.blockBiomeArray == null)
+            this.blockBiomeArray = new byte[8 * 8];
+
+        this.blockBiomeArray[AddressTools.getBiomeAddress(localBiomeX, localBiomeZ)] = (byte) Biome.REGISTRY.getIDForObject(biome);
     }
 
+    @Nullable
+    public byte[] getBiomeArray() {
+        return this.blockBiomeArray;
+    }
+
+    public void setBiomeArray(byte[] biomeArray) {
+        if (this.blockBiomeArray == null)
+            this.blockBiomeArray = biomeArray;
+        if (this.blockBiomeArray.length != biomeArray.length) {
+            CubicChunks.LOGGER.warn("Could not set level cube biomes, array length is {} instead of {}", Integer.valueOf(biomeArray.length),
+                    Integer.valueOf(this.blockBiomeArray.length));
+        } else {
+            System.arraycopy(biomeArray, 0, this.blockBiomeArray, 0, this.blockBiomeArray.length);
+        }
+    }
     //=================================
     //=========Other methods===========
     //=================================
 
-    @Override public boolean isEmpty() {
+    @Override
+    public boolean isEmpty() {
         return storage == null || this.storage.isEmpty();
     }
 
-    @Override public BlockPos localAddressToBlockPos(int localAddress) {
+    @Override
+    public BlockPos localAddressToBlockPos(int localAddress) {
         int x = localToBlock(this.coords.getX(), AddressTools.getLocalX(localAddress));
         int y = localToBlock(this.coords.getY(), AddressTools.getLocalY(localAddress));
         int z = localToBlock(this.coords.getZ(), AddressTools.getLocalZ(localAddress));
         return new BlockPos(x, y, z);
     }
 
+    @SuppressWarnings("unchecked")
     public <T extends World & ICubicWorld> T getWorld() {
         return (T) this.world;
     }
 
-    @Override public <T extends Chunk & IColumn> T getColumn() {
+    @SuppressWarnings({"unchecked", "deprecation", "RedundantSuppression"})
+    @Override
+    public <T extends Chunk & IColumn> T getColumn() {
         return (T) this.column;
     }
 
-    @Override public int getX() {
+    @Override
+    public int getX() {
         return this.coords.getX();
     }
 
-    @Override public int getY() {
+    @Override
+    public int getY() {
         return this.coords.getY();
     }
 
-    @Override public int getZ() {
+    @Override
+    public int getZ() {
         return this.coords.getZ();
     }
 
-    @Override public CubePos getCoords() {
+    @Override
+    public CubePos getCoords() {
         return this.coords;
     }
 
-    @Override public boolean containsBlockPos(BlockPos blockPos) {
+    @Override
+    public boolean containsBlockPos(BlockPos blockPos) {
         return this.coords.getX() == blockToCube(blockPos.getX())
                 && this.coords.getY() == blockToCube(blockPos.getY())
                 && this.coords.getZ() == blockToCube(blockPos.getZ());
     }
 
-    @Override @Nullable public ExtendedBlockStorage getStorage() {
+    @Override
+    @Nullable
+    public ExtendedBlockStorage getStorage() {
         return this.storage;
     }
 
-    @Nullable public ExtendedBlockStorage setStorage(@Nullable ExtendedBlockStorage ebs) {
+    @Nullable
+    public ExtendedBlockStorage setStorage(@Nullable ExtendedBlockStorage ebs) {
         this.isModified = true;
         return this.storage = ebs;
     }
@@ -444,24 +528,40 @@ public class Cube implements ICube {
         storage = new ExtendedBlockStorage(cubeToMinBlock(getY()), world.provider.hasSkyLight());
     }
 
-    @Override public Map<BlockPos, TileEntity> getTileEntityMap() {
+    @Override
+    public Map<BlockPos, TileEntity> getTileEntityMap() {
         return this.tileEntityMap;
     }
 
-    @Override public ClassInheritanceMultiMap<Entity> getEntitySet() {
+    @Override
+    public ClassInheritanceMultiMap<Entity> getEntitySet() {
         return this.entities.getEntitySet();
     }
 
-    @Override public void addEntity(Entity entity) {
+    @Override
+    public void addEntity(Entity entity) {
         this.entities.addEntity(entity);
     }
 
-    @Override public boolean removeEntity(Entity entity) {
+    @Override
+    public boolean removeEntity(Entity entity) {
         return this.entities.remove(entity);
     }
 
     public EntityContainer getEntityContainer() {
         return this.entities;
+    }
+
+    /**
+     * Returns true if the cube still needs to be ticked this tick.
+     *
+     * @param totalTime world time
+     * @return true if cube still needs to be ticked at this world time
+     */
+    public boolean checkAndUpdateTick(long totalTime) {
+        boolean ret = totalTime != this.lastTicked;
+        this.lastTicked = totalTime;
+        return ret;
     }
 
     /**
@@ -479,6 +579,8 @@ public class Cube implements ICube {
         if (!isSurfaceTracked) {
             trackSurface();
         }
+        CompatHandler.onCubeLoad(new ChunkEvent.Load(getColumn()));
+        EVENT_BUS.post(new CubeEvent.Load(this));
     }
 
     @SuppressWarnings("deprecation")
@@ -527,9 +629,11 @@ public class Cube implements ICube {
         for (TileEntity blockEntity : this.tileEntityMap.values()) {
             this.world.markTileEntityForRemoval(blockEntity);
         }
+        EVENT_BUS.post(new CubeEvent.Unload(this));
     }
 
-    @Override public boolean needsSaving() {
+    @Override
+    public boolean needsSaving() {
         return this.entities.needsSaving(true, this.world.getTotalWorldTime(), this.isModified);
     }
 
@@ -578,9 +682,11 @@ public class Cube implements ICube {
         this.isFullyPopulated = true;
         this.isInitialLightingDone = true;
         this.isSurfaceTracked = true;
+        this.ticked = true;
     }
 
-    @Override public boolean isPopulated() {
+    @Override
+    public boolean isPopulated() {
         return isPopulated;
     }
 
@@ -596,7 +702,8 @@ public class Cube implements ICube {
         this.isModified = true;
     }
 
-    @Override public boolean isFullyPopulated() {
+    @Override
+    public boolean isFullyPopulated() {
         return this.isFullyPopulated;
     }
 
@@ -614,21 +721,27 @@ public class Cube implements ICube {
 
     /**
      * Sets internal isSurfaceTracked value. Intended to be used only for deserialization.
+     *
+     * @param value true if surface is already tracked
      */
     public void setSurfaceTracked(boolean value) {
         this.isSurfaceTracked = value;
     }
 
-    @Override public boolean isSurfaceTracked() {
+    @Override
+    public boolean isSurfaceTracked() {
         return this.isSurfaceTracked;
     }
 
-    @Override public boolean isInitialLightingDone() {
+    @Override
+    public boolean isInitialLightingDone() {
         return isInitialLightingDone;
     }
 
     /**
      * Notify this cube that it's initial diffuse skylight has been calculated
+     *
+     * @param initialLightingDone true if initial lighting is done
      */
     public void setInitialLightingDone(boolean initialLightingDone) {
         this.isInitialLightingDone = initialLightingDone;
@@ -639,16 +752,61 @@ public class Cube implements ICube {
         this.isCubeLoaded = true;
     }
 
-    @Override public boolean isCubeLoaded() {
+    @Override
+    public boolean isCubeLoaded() {
         return this.isCubeLoaded;
     }
 
-    @Override public boolean hasLightUpdates() {
+    @Override
+    public boolean hasLightUpdates() {
         LightingManager.CubeLightUpdateInfo info = this.getCubeLightUpdateInfo();
         return info != null && info.hasUpdates();
     }
 
     public void markEdgeNeedSkyLightUpdate(EnumFacing side) {
         this.edgeNeedSkyLightUpdate[side.ordinal()] = true;
+    }
+
+    public boolean hasBeenTicked() {
+        return ticked;
+    }
+
+    @Override
+    @Nullable
+    public CapabilityDispatcher getCapabilities() {
+        return this.capabilities;
+    }
+
+    @Override
+    public EnumSet<ForcedLoadReason> getForceLoadStatus() {
+        EnumSet<ForcedLoadReason> forcedLoadReasons = EnumSet.noneOf(ForcedLoadReason.class);
+        if (this.tickets.canUnload()) {
+            return forcedLoadReasons;
+        }
+        if (this.tickets.anyMatch(t -> t instanceof SpawnCubes)) {
+            forcedLoadReasons.add(ForcedLoadReason.SPAWN_AREA);
+        }
+        if (this.tickets.anyMatch(t -> t instanceof CubeWatcher)) {
+            forcedLoadReasons.add(ForcedLoadReason.PLAYER);
+        }
+        if (this.tickets.anyMatch(t -> t instanceof ICubicTicketInternal)) {
+            forcedLoadReasons.add(ForcedLoadReason.MOD_TICKET);
+        }
+        if (this.tickets.anyMatch(t ->
+                !(t instanceof SpawnCubes) && !(t instanceof CubeWatcher) && !(t instanceof ICubicTicketInternal))) {
+            forcedLoadReasons.add(ForcedLoadReason.OTHER);
+        }
+        return forcedLoadReasons;
+    }
+
+    @Override
+    public boolean hasCapability(Capability<?> capability, @Nullable EnumFacing facing) {
+        return this.capabilities != null && this.capabilities.hasCapability(capability, facing);
+    }
+
+    @Override
+    @Nullable
+    public <T> T getCapability(Capability<T> capability, @Nullable EnumFacing facing) {
+        return this.capabilities == null ? null : this.capabilities.getCapability(capability, facing);
     }
 }

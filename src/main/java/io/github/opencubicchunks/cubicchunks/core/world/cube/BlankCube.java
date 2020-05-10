@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -51,7 +52,7 @@ import javax.annotation.ParametersAreNonnullByDefault;
 public class BlankCube extends Cube {
 
     public BlankCube(Chunk column) {
-        super(new TicketList(), column.getWorld(), column, new CubePos(0, 0, 0),
+        super(new TicketList(null), column.getWorld(), column, new CubePos(0, 0, 0),
                 Cube.NULL_STORAGE, new BlankEntityContainer(), new HashMap<>(), new ConcurrentLinkedQueue<>(),
                 new LightingManager.CubeLightUpdateInfo(null) {
                     @Override

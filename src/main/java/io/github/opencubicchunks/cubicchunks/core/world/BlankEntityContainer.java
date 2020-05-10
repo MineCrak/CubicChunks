@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -23,7 +24,6 @@
  */
 package io.github.opencubicchunks.cubicchunks.core.world;
 
-import io.github.opencubicchunks.cubicchunks.core.util.ClassInheritanceMultiMapFactory;
 import net.minecraft.entity.Entity;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.util.ClassInheritanceMultiMap;
@@ -37,7 +37,7 @@ import java.util.function.Consumer;
 public class BlankEntityContainer extends EntityContainer {
 
     public BlankEntityContainer() {
-        this.entities = ClassInheritanceMultiMapFactory.EMPTY_ARR[0];
+        this.entities = EntityContainer.EMPTY_ARR[0];
     }
 
     @Override

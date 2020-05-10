@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -48,6 +49,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.BlockPos.MutableBlockPos;
 import net.minecraft.world.EnumSkyBlock;
 import net.minecraft.world.WorldServer;
+import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 
@@ -133,6 +135,8 @@ public class FirstLightProcessor {
 
         BlockPos startPos = cube.getCoords().getMinBlockPos();
 
+        ExtendedBlockStorage ebs = cube.getStorage();
+
         for (int localX = 0; localX < Cube.SIZE; ++localX) {
             for (int localZ = 0; localZ < Cube.SIZE; ++localZ) {
                 for (int localY = Cube.SIZE - 1; localY >= 0; --localY) {
@@ -140,8 +144,11 @@ public class FirstLightProcessor {
                     if (opacityIndex.isOccluded(localX, cubeMinY + localY, localZ)) {
                         break;
                     }
-
-                    cube.setLightFor(EnumSkyBlock.SKY, startPos.add(localX, localY, localZ), 15);
+                    if (ebs == null) {
+                        ebs = cube.setStorage(new ExtendedBlockStorage(cubeToMinBlock(cube.getY()), cube.getWorld().provider.hasSkyLight()));
+                    }
+                    assert ebs != null;
+                    ebs.setSkyLight(localX, localY, localZ, 15);
                 }
             }
         }
@@ -198,7 +205,7 @@ public class FirstLightProcessor {
         IColumn column = cube.getColumn();
         // Iterate over all affected cubes.
         Iterable<? extends ICube> cubes = column.getLoadedCubes(blockToCube(maxMaxHeight), blockToCube(minMinHeight));
-        for (Cube otherCube : (Iterable<Cube>) cubes) {
+        for (ICube otherCube : cubes) {
             int minCubeBlockY = otherCube.getCoords().getMinBlockY();
             int maxCubeBlockY = otherCube.getCoords().getMaxBlockY();
             for (int blockX = minBlockX; blockX <= maxBlockX; blockX++) {
@@ -263,7 +270,7 @@ public class FirstLightProcessor {
      *
      * @return true if the update was successful, false otherwise
      */
-    private boolean diffuseSkylightInBlockColumn(Cube cube, MutableBlockPos pos, int minBlockY, int maxBlockY,
+    private boolean diffuseSkylightInBlockColumn(ICube cube, MutableBlockPos pos, int minBlockY, int maxBlockY,
             Int2ObjectMap<FastCubeBlockAccess> blockAccessMap, List<BlockPos> posToUpdate) {
         int cubeMinBlockY = cubeToMinBlock(cube.getY());
         int cubeMaxBlockY = cubeToMaxBlock(cube.getY());
@@ -329,7 +336,7 @@ public class FirstLightProcessor {
      *
      * @return true if light in the given cube can be updated, false otherwise
      */
-    private static boolean canUpdateCube(@Nonnull Cube cube) {
+    private static boolean canUpdateCube(@Nonnull ICube cube) {
         BlockPos cubeCenter = getCubeCenter(cube);
         return cube.getWorld().testForCubes(cubeCenter, UPDATE_RADIUS, Objects::nonNull);
     }

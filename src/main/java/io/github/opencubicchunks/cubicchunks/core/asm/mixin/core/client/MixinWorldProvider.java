@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -40,7 +41,7 @@ import javax.annotation.ParametersAreNonnullByDefault;
 @ParametersAreNonnullByDefault
 @MethodsReturnNonnullByDefault
 @Mixin(WorldProvider.class)
-public abstract class MixinWorldProvider implements ICubicWorldProvider {
+public abstract class MixinWorldProvider {
 
     @Shadow protected World world;
 
@@ -60,8 +61,8 @@ public abstract class MixinWorldProvider implements ICubicWorldProvider {
             cir.cancel();
         }
     }
-    
+
     private ICubicWorld cubicWorld() {
-        return (ICubicWorld) world;
+        return (ICubicWorld) this.world;
     }
 }

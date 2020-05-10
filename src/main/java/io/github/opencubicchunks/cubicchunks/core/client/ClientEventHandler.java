@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -25,11 +26,15 @@ package io.github.opencubicchunks.cubicchunks.core.client;
 
 import io.github.opencubicchunks.cubicchunks.api.util.MathUtil;
 import io.github.opencubicchunks.cubicchunks.core.CubicChunksConfig;
+import io.github.opencubicchunks.cubicchunks.core.asm.mixin.core.client.IGuiCreateWorld;
+import io.github.opencubicchunks.cubicchunks.core.asm.mixin.core.client.IGuiOptionsRowList;
+import io.github.opencubicchunks.cubicchunks.core.asm.mixin.core.client.IGuiScreen;
+import io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.IGuiVideoSettings;
 import io.github.opencubicchunks.cubicchunks.core.server.ICubicPlayerList;
 import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
-import io.github.opencubicchunks.cubicchunks.core.server.ICubicPlayerList;
 import io.github.opencubicchunks.cubicchunks.core.asm.mixin.ICubicWorldInternal;
 import io.github.opencubicchunks.cubicchunks.api.world.ICubicWorldType;
+import io.github.opencubicchunks.cubicchunks.api.worldgen.VanillaCompatibilityGeneratorProviderBase;
 import mcp.MethodsReturnNonnullByDefault;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
@@ -39,6 +44,7 @@ import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiVideoSettings;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.resources.I18n;
+import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.WorldType;
 import net.minecraftforge.client.event.GuiScreenEvent;
@@ -51,6 +57,7 @@ import net.minecraftforge.fml.common.gameevent.TickEvent;
 
 import net.minecraftforge.fml.relauncher.Side;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -90,27 +97,27 @@ public class ClientEventHandler {
         GuiScreen currentGui = event.getGui();
         if (currentGui instanceof GuiVideoSettings) {
             GuiVideoSettings gvs = (GuiVideoSettings) currentGui;
-            try {
-                GuiOptionsRowList gowl = (GuiOptionsRowList) gvs.optionsRowList;
+            if (!FMLClientHandler.instance().hasOptifine()) {
+                IGuiOptionsRowList gowl = (IGuiOptionsRowList) ((IGuiVideoSettings) gvs).getOptionsRowList();
                 GuiOptionsRowList.Row row = this.createRow(100, gvs.width);
-                gowl.options.add(1, row);
-            } catch (NoSuchFieldError err) {
+                gowl.getOptions().add(1, row);
+            } else {
                 int idx = 3;
                 int btnSpacing = 20;
-                CubicChunks.LOGGER.error("Couldn't add vertical view distance options, maybe optifine is installed? Attempting optifine-specific "
-                        + "option add", err.toString());
-                gvs.buttonList.add(idx, new VertViewDistanceSlider(100, gvs.width / 2 - 155 + 160, gvs.height / 6 + btnSpacing * (idx / 2) - 12));
+                ((IGuiScreen) gvs).getButtonList()
+                        .add(idx, new VertViewDistanceSlider(100, gvs.width / 2 - 155 + 160, gvs.height / 6 + btnSpacing * (idx / 2) - 12));
+                List<GuiButton> buttons = ((IGuiScreen) gvs).getButtonList();
                 // reposition all buttons except the last 4 (last 3 and done)
-                for (int i = 0; i < gvs.buttonList.size() - 4; i++) {
-                    GuiButton btn = gvs.buttonList.get(i);
+                for (int i = 0; i < buttons.size() - 4; i++) {
+                    GuiButton btn = buttons.get(i);
                     int x = gvs.width / 2 - 155 + i % 2 * 160;
                     int y = gvs.height / 6 + 21 * (i / 2) - 12;
                     btn.x = x;
                     btn.y = y;
                 }
                 // now position the last 3 buttons excluding "done" to be 3-in-a-row
-                for (int i = gvs.buttonList.size() - 4; i < gvs.buttonList.size() - 1; i++) {
-                    GuiButton btn = gvs.buttonList.get(i);
+                for (int i = buttons.size() - 4; i < buttons.size() - 1; i++) {
+                    GuiButton btn = buttons.get(i);
 
                     int newBtnWidth = 150 * 2 / 3;
                     int minX = gvs.width / 2 - 155;
@@ -120,7 +127,7 @@ public class ClientEventHandler {
                     int maxXCenter = maxX - newBtnWidth / 2;
 
                     int x = minXCenter + (i % 3) * (maxXCenter - minXCenter) / 2 - newBtnWidth / 2;
-                    int y = gvs.height / 6 + 21 * (gvs.buttonList.size() - 4) / 2 - 12;
+                    int y = gvs.height / 6 + 21 * (buttons.size() - 4) / 2 - 12;
 
                     btn.x = x;
                     btn.y = y;
@@ -138,13 +145,13 @@ public class ClientEventHandler {
 
     private class VertViewDistanceSlider extends GuiButton {
 
+        private final int MAX_VIEW_DIST = CubicChunks.hasOptifine() ?  64 : 32;
         private float sliderValue;
         public boolean dragging;
 
         public VertViewDistanceSlider(int buttonId, int x, int y) {
             super(buttonId, x, y, 150, 20, "");
-            this.sliderValue = 1.0F;
-            this.sliderValue = CubicChunksConfig.verticalCubeLoadDistance;
+            this.sliderValue = MathUtil.unlerp(CubicChunksConfig.verticalCubeLoadDistance, 2, MAX_VIEW_DIST);
             this.displayString = this.createDisplayString();
         }
 
@@ -152,6 +159,7 @@ public class ClientEventHandler {
          * Returns 0 if the button is disabled, 1 if the mouse is NOT hovering
          * over this button and 2 if it IS hovering over this button.
          */
+        @Override
         protected int getHoverState(boolean mouseOver) {
             return 0;
         }
@@ -160,14 +168,15 @@ public class ClientEventHandler {
          * Fired when the mouse button is dragged. Equivalent of
          * MouseListener.mouseDragged(MouseEvent e).
          */
+        @Override
         protected void mouseDragged(Minecraft mc, int mouseX, int mouseY) {
             if (this.visible) {
                 if (this.dragging) {
                     this.sliderValue = (float) (mouseX - (this.x + 4)) / (float) (this.width - 8);
                     this.sliderValue = MathHelper.clamp(this.sliderValue, 0.0F, 1.0F);
                     CubicChunksConfig.setVerticalViewDistance(
-                            Math.round(MathUtil.lerp(this.sliderValue, 2, 32)));
-                    this.sliderValue = MathUtil.unlerp(CubicChunksConfig.verticalCubeLoadDistance, 2, 32);
+                            Math.round(MathUtil.lerp(this.sliderValue, 2, MAX_VIEW_DIST)));
+                    this.sliderValue = MathUtil.unlerp(CubicChunksConfig.verticalCubeLoadDistance, 2, MAX_VIEW_DIST);
                     this.displayString = this.createDisplayString();
                 }
 
@@ -182,13 +191,14 @@ public class ClientEventHandler {
          * Returns true if the mouse has been pressed on this control.
          * Equivalent of MouseListener.mousePressed(MouseEvent e).
          */
+        @Override
         public boolean mousePressed(Minecraft mc, int mouseX, int mouseY) {
             if (super.mousePressed(mc, mouseX, mouseY)) {
                 this.sliderValue = (float) (mouseX - (this.x + 4)) / (float) (this.width - 8);
                 this.sliderValue = MathHelper.clamp(this.sliderValue, 0.0F, 1.0F);
                 CubicChunksConfig.setVerticalViewDistance(
-                        Math.round(MathUtil.lerp(this.sliderValue, 2, 32)));
-                this.sliderValue = MathUtil.unlerp(CubicChunksConfig.verticalCubeLoadDistance, 2, 32);
+                        Math.round(MathUtil.lerp(this.sliderValue, 2, MAX_VIEW_DIST)));
+                this.sliderValue = MathUtil.unlerp(CubicChunksConfig.verticalCubeLoadDistance, 2, MAX_VIEW_DIST);
                 this.displayString = this.createDisplayString();
                 this.dragging = true;
                 return true;
@@ -205,6 +215,7 @@ public class ClientEventHandler {
          * Fired when the mouse button is released. Equivalent of
          * MouseListener.mouseReleased(MouseEvent e).
          */
+        @Override
         public void mouseReleased(int mouseX, int mouseY) {
             this.dragging = false;
         }
@@ -219,6 +230,8 @@ public class ClientEventHandler {
         private static final int MORE_WORLD_OPTIONS = 3;
 
         private static final int CC_ENABLE_BUTTON_ID = 11;
+        private static final List<ResourceLocation> LIST_OF_GEN_OPTIONS = new ArrayList<ResourceLocation>();
+        private static int CURRENT_GEN_OPTION = 0;
 
         @SubscribeEvent
         public static void guiInit(InitGuiEvent.Post event) {
@@ -248,10 +261,20 @@ public class ClientEventHandler {
 
                 refreshText(gui, enableCC);
             }));
+            LIST_OF_GEN_OPTIONS.addAll(VanillaCompatibilityGeneratorProviderBase.REGISTRY.getKeys());
+            CURRENT_GEN_OPTION = LIST_OF_GEN_OPTIONS.indexOf(new ResourceLocation(CubicChunksConfig.compatibilityGeneratorType));
         }
+        
         private static void refreshText(GuiCreateWorld gui, GuiButton enableBtn) {
-            enableBtn.displayString = I18n.format("cubicchunks.gui.worldmenu." +
-                    (CubicChunksConfig.forceCubicChunks ? "cc_enable" : "cc_disable"));
+            String txt;
+            if (CubicChunksConfig.forceLoadCubicChunks == CubicChunksConfig.ForceCCMode.NONE) {
+                txt = "cubicchunks.gui.worldmenu.cc_disable";
+            } else {
+                VanillaCompatibilityGeneratorProviderBase provider = VanillaCompatibilityGeneratorProviderBase.REGISTRY
+                        .getValue(new ResourceLocation(CubicChunksConfig.compatibilityGeneratorType));
+                txt = provider.getUnlocalizedName();
+            }
+            enableBtn.displayString = I18n.format(txt);
         }
 
         @SubscribeEvent
@@ -274,12 +297,18 @@ public class ClientEventHandler {
                             }
                         }
                         assert enableCC != null;
-                        boolean isCubicChunksType = WorldType.WORLD_TYPES[((GuiCreateWorld) gui).selectedIndex] instanceof ICubicWorldType;
+                        boolean isCubicChunksType = WorldType.WORLD_TYPES[((IGuiCreateWorld) gui).getSelectedIndex()] instanceof ICubicWorldType;
                         enableCC.visible = mapType != null && !isCubicChunksType && mapType.visible;
                         break;
                     }
                     case CC_ENABLE_BUTTON_ID: {
-                        CubicChunksConfig.flipForceCubicChunks();
+                        CURRENT_GEN_OPTION++;
+                        if (CURRENT_GEN_OPTION >= LIST_OF_GEN_OPTIONS.size()) {
+                            CubicChunksConfig.disableCubicChunks();
+                            CURRENT_GEN_OPTION = -1;
+                        } else {
+                            CubicChunksConfig.setGenerator(LIST_OF_GEN_OPTIONS.get(CURRENT_GEN_OPTION));
+                        }
                         refreshText((GuiCreateWorld) gui, button);
                         break;
                     }

@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -23,17 +24,18 @@
  */
 package io.github.opencubicchunks.cubicchunks.core.server.chunkio;
 
-import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
 import cubicchunks.regionlib.api.region.key.IKey;
 import cubicchunks.regionlib.impl.EntryLocation2D;
 import cubicchunks.regionlib.impl.EntryLocation3D;
 import cubicchunks.regionlib.impl.SaveCubeColumns;
 import io.github.opencubicchunks.cubicchunks.api.util.CubePos;
+import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
 import io.github.opencubicchunks.cubicchunks.core.world.cube.Cube;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.util.datafix.FixTypes;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.world.World;
 import net.minecraft.world.WorldProvider;
 import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
@@ -45,6 +47,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Iterator;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -59,12 +62,12 @@ public class RegionCubeIO implements ICubeIO {
     private static final long MB = kB * 1024;
     private static final Logger LOGGER = CubicChunks.LOGGER;
 
-    @Nonnull private WorldServer world;
-    @Nonnull private SaveCubeColumns save;
+    @Nonnull private World world;
+    private SaveCubeColumns save;
     @Nonnull private ConcurrentMap<ChunkPos, SaveEntry<EntryLocation2D>> columnsToSave;
     @Nonnull private ConcurrentMap<CubePos, SaveEntry<EntryLocation3D>> cubesToSave;
-    
-    public RegionCubeIO(WorldServer world) throws IOException {
+
+    public RegionCubeIO(World world) throws IOException {
         this.world = world;
 
         initSave();
@@ -74,44 +77,68 @@ public class RegionCubeIO implements ICubeIO {
         this.cubesToSave = new ConcurrentHashMap<>();
     }
 
-    private void initSave() throws IOException {
-        WorldProvider prov = world.provider;
-        Path path = this.world.getSaveHandler().getWorldDirectory().toPath();
-        if (prov.getSaveFolder() != null) {
-            path = path.resolve(prov.getSaveFolder());
+    @Nonnull
+    private synchronized SaveCubeColumns getSave() throws IOException {
+        if (save == null) {
+            initSave();
         }
+        return save;
+    }
+
+    private void initSave() throws IOException {
+        // TODO: make path a constructor argument
+        Path path;
+        if (world instanceof WorldServer) {
+            WorldProvider prov = world.provider;
+            path = this.world.getSaveHandler().getWorldDirectory().toPath();
+            if (prov.getSaveFolder() != null) {
+                path = path.resolve(prov.getSaveFolder());
+            }
+        } else {
+            path = Paths.get(".").toAbsolutePath().resolve("clientCache").resolve("DIM" + world.provider.getDimension());
+        }
+
         this.save = SaveCubeColumns.create(path);
     }
 
-    @Override public void flush() throws IOException {
-        if (columnsToSave.size() != 0 || cubesToSave.size() != 0) {
-            LOGGER.error("Attempt to flush() CubeIO when there are remaining cubes to save! Saving remaining cubes to avoid corruption");
-            while (this.writeNextIO()) {
-                ;
-            }
+    @Override
+    public void flush() throws IOException {
+        try {
+            ThreadedFileIOBase.getThreadedIOInstance().waitForFinish();
+        } catch (InterruptedException iex) {
+            iex.printStackTrace();
         }
 
         try {
-            this.save.close();
-        } catch(IllegalStateException alreadyClosed) {
+            this.closeSave();
+        } catch (IllegalStateException alreadyClosed) {
             // ignore
         } catch (Exception ex) {
             CubicChunks.LOGGER.catching(ex);
         }
-        // TODO: hack! fix this properly in RegionLib by adding flush()
-        // this avoids Already closed exceptions when vanilla calls flush without the intent to actually close anything
-        // This also needs a lot of testing on windows
-        this.initSave();
     }
 
-    @Override @Nullable public Chunk loadColumn(int chunkX, int chunkZ) throws IOException {
+    private synchronized void closeSave() throws IOException {
+        try {
+            if (save != null) {
+                this.save.close();
+            }
+        } finally {
+            this.save = null;
+        }
+    }
+
+    @Override
+    @Nullable
+    public Chunk loadColumn(int chunkX, int chunkZ) throws IOException {
+        SaveCubeColumns save = this.getSave();
         NBTTagCompound nbt;
         SaveEntry<EntryLocation2D> saveEntry;
         if ((saveEntry = columnsToSave.get(new ChunkPos(chunkX, chunkZ))) != null) {
             nbt = saveEntry.nbt;
         } else {
             // IOException makes using Optional impossible :(
-            Optional<ByteBuffer> buf = this.save.load(new EntryLocation2D(chunkX, chunkZ));
+            Optional<ByteBuffer> buf = save.load(new EntryLocation2D(chunkX, chunkZ), true);
             if (!buf.isPresent()) {
                 return null;
             }
@@ -121,14 +148,14 @@ public class RegionCubeIO implements ICubeIO {
     }
 
     @Override @Nullable public ICubeIO.PartialCubeData loadCubeAsyncPart(Chunk column, int cubeY) throws IOException {
-
+        SaveCubeColumns save = this.getSave();
         NBTTagCompound nbt;
         SaveEntry<EntryLocation3D> saveEntry;
         if ((saveEntry = this.cubesToSave.get(new CubePos(column.x, cubeY, column.z))) != null) {
             nbt = saveEntry.nbt;
         } else {
             // does the database have the cube?
-            Optional<ByteBuffer> buf = this.save.load(new EntryLocation3D(column.x, cubeY, column.z));
+            Optional<ByteBuffer> buf = save.load(new EntryLocation3D(column.x, cubeY, column.z), true);
             if (!buf.isPresent()) {
                 return null;
             }
@@ -172,21 +199,44 @@ public class RegionCubeIO implements ICubeIO {
         ThreadedFileIOBase.getThreadedIOInstance().queueIO(this);
     }
 
+    @Override public boolean cubeExists(int cubeX, int cubeY, int cubeZ) {
+        try {
+            return this.getSave().getSaveSection3D().hasEntry(new EntryLocation3D(cubeX, cubeY, cubeZ));
+        } catch (IOException e) {
+            CubicChunks.LOGGER.catching(e);
+            return false;
+        }
+    }
+
+    @Override public boolean columnExists(int columnX, int columnZ) {
+        try {
+            return this.getSave().getSaveSection2D().hasEntry(new EntryLocation2D(columnX, columnZ));
+        } catch (IOException e) {
+            CubicChunks.LOGGER.catching(e);
+            return false;
+        }
+    }
+
+    @Override public int getPendingColumnCount() {
+        return columnsToSave.size();
+    }
+
+    @Override public int getPendingCubeCount() {
+        return cubesToSave.size();
+    }
+
     @Override
     public boolean writeNextIO() {
         try {
+
+            SaveCubeColumns save = this.getSave();
             // NOTE: return true to redo this call (used for batching)
 
             final int ColumnsBatchSize = 25;
             final int CubesBatchSize = 250;
 
             int numColumnsSaved = 0;
-            int numColumnsRemaining;
-            int numColumnBytesSaved = 0;
             int numCubesSaved = 0;
-            int numCubesRemaining;
-            int numCubeBytesSaved = 0;
-            long start = System.currentTimeMillis();
 
             // save a batch of columns
             Iterator<SaveEntry<EntryLocation2D>> colIt = columnsToSave.values().iterator();
@@ -195,11 +245,10 @@ public class RegionCubeIO implements ICubeIO {
                 try {
                     // save the column
                     byte[] data = IONbtWriter.writeNbtBytes(entry.nbt);
-                    this.save.save2d(entry.pos, ByteBuffer.wrap(data));
+                    save.save2d(entry.pos, ByteBuffer.wrap(data));
                     //column can be removed from toSave queue only after writing to disk
                     //to avoid race conditions
                     colIt.remove();
-                    numColumnBytesSaved += data.length;
                 } catch (Throwable t) {
                     LOGGER.error(String.format("Unable to write column (%d, %d)", entry.pos.getEntryX(), entry.pos.getEntryZ()), t);
                 }
@@ -216,30 +265,18 @@ public class RegionCubeIO implements ICubeIO {
                     // save the cube
                     byte[] data = IONbtWriter.writeNbtBytes(entry.nbt);
                     try {
-                        this.save.save3d(entry.pos, ByteBuffer.wrap(data));
+                        save.save3d(entry.pos, ByteBuffer.wrap(data));
                     } finally {
                         //cube can be removed from toSave queue only after writing to disk
                         //to avoid race conditions
                         cubeIt.remove();
                     }
-
-                    numCubeBytesSaved += data.length;
                 } catch (Throwable t) {
                     LOGGER.error(
                             String.format("Unable to write cube %d, %d, %d", entry.pos.getEntryX(), entry.pos.getEntryY(), entry.pos.getEntryZ()), t);
                 }
             }
             boolean hasMoreCubes = cubeIt.hasNext();
-
-            numColumnsRemaining = this.columnsToSave.size();
-            numCubesRemaining = this.cubesToSave.size();
-
-            long diff = System.currentTimeMillis() - start;
-            LOGGER.debug("Wrote {} columns ({} remaining) ({}k) and {} cubes ({} remaining) ({}k) in {} ms",
-                    numColumnsSaved, numColumnsRemaining, numColumnBytesSaved / 1024,
-                    numCubesSaved, numCubesRemaining, numCubeBytesSaved / 1024, diff
-            );
-
             return hasMoreColumns || hasMoreCubes;
         } catch (Throwable t) {
             LOGGER.error("Exception occurred when saving cubes", t);

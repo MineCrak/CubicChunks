@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -48,9 +49,9 @@ public abstract class MixinWorld_SlowCollisionCheck implements ICubicWorld {
 
     @Shadow public abstract WorldBorder getWorldBorder();
 
-    @Shadow protected abstract boolean isBlockLoaded(BlockPos pos);
+    @Shadow public abstract boolean isBlockLoaded(BlockPos pos);
 
-    @Shadow protected abstract IBlockState getBlockState(BlockPos pos);
+    @Shadow public abstract IBlockState getBlockState(BlockPos pos);
 
     /**
      * @author Barteks2x

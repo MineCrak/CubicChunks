@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -27,19 +28,15 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 
-import io.github.opencubicchunks.cubicchunks.core.CubicChunks;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.spongepowered.asm.lib.tree.ClassNode;
+import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 
@@ -63,44 +60,90 @@ public class CubicChunksMixinConfig implements IMixinConfigPlugin {
     @Override
     public void onLoad(String mixinPackage) {
         OptifineState optifineState = OptifineState.NOT_LOADED;
-        String optifineVersion = System.getProperty("cubicchunks.optifineVersion", "empty");
-        if (optifineVersion.equals("empty")) {
+        String optifineVersion = System.getProperty("cubicchunks.optifineVersion", null);
+        if (optifineVersion == null) {
             try {
                 Class optifineInstallerClass = Class.forName("optifine.Installer");
                 Method getVersionHandler = optifineInstallerClass.getMethod("getOptiFineVersion", new Class[0]);
                 optifineVersion = (String) getVersionHandler.invoke(null, new Object[0]);
                 optifineVersion = optifineVersion.replace("_pre", "");
-                optifineVersion = optifineVersion.substring(optifineVersion.length() - 2, optifineVersion.length());
+                optifineVersion = optifineVersion.substring(optifineVersion.length() - 2);
                 LOGGER.info("Detected Optifine version: " + optifineVersion);
             } catch (ClassNotFoundException e) {
-                optifineVersion = "ignore";
+                optifineVersion = null;
                 LOGGER.info("No Optifine detected");
             } catch (Exception e) {
-                LOGGER.info("Optifine detected, but have incompatible build. Optifine D1 specific mixins will be loaded.");
-                optifineVersion = "D1";
+                LOGGER.error("Optifine detected, but could not detect version. It may not work. Assuming Optifine E1...", e);
+                optifineVersion = "E1";
             }
         }
 
-        if(optifineVersion.equalsIgnoreCase("ignore"))
+        if (optifineVersion == null) {
             optifineState = OptifineState.NOT_LOADED;
-        else if (optifineVersion.compareTo("D1") >= 0)
-            optifineState = OptifineState.LOADED_D1;
-        else
-            optifineState = OptifineState.LOADED_C7;
+        } else if (optifineVersion.compareTo("E3") >= 0) {
+            LOGGER.error("Unknown optifine version: " + optifineVersion + ", it may not work. Assuming E1.");
+            optifineState = OptifineState.LOADED_E1;
+        } else if (optifineVersion.compareTo("E1") >= 0) {
+            optifineState = OptifineState.LOADED_E1;
+        } else {
+            new RuntimeException("Unsupported optifine version " + optifineVersion + ", trying E1-specific mixins").printStackTrace();
+            optifineState = OptifineState.LOADED_E1;
+        }
 
         modDependencyConditions.defaultReturnValue(true);
         modDependencyConditions.put(
                 "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.MixinRenderGlobalNoOptifine",
                 optifineState == OptifineState.NOT_LOADED);
         modDependencyConditions.put(
-                "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.MixinRenderGlobalOptifineSpecific",
+                "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.vertviewdist.MixinRenderGlobalNoOptifine",
+                optifineState == OptifineState.NOT_LOADED && BoolOptions.VERT_RENDER_DISTANCE.getValue());
+
+        modDependencyConditions.put(
+                "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.optifine.MixinRenderGlobalOptifine_E",
                 optifineState != OptifineState.NOT_LOADED);
         modDependencyConditions.put(
-                "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.MixinRenderGlobalOptifineSpecificC7",
-                optifineState == OptifineState.LOADED_C7);
+                "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.optifine.MixinRenderChunk",
+                optifineState != OptifineState.NOT_LOADED);
         modDependencyConditions.put(
-                "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.MixinRenderGlobalOptifineSpecificD1",
-                optifineState == OptifineState.LOADED_D1);
+                "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.optifine.MixinRenderChunkUtils",
+                optifineState != OptifineState.NOT_LOADED);
+        modDependencyConditions.put(
+                "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.optifine.MixinExtendedBlockStorage",
+                optifineState != OptifineState.NOT_LOADED);
+        modDependencyConditions.put(
+                "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.optifine.MixinRenderList",
+                optifineState != OptifineState.NOT_LOADED);
+        modDependencyConditions.put(
+                "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.optifine.MixinViewFrustum",
+                optifineState != OptifineState.NOT_LOADED);
+        modDependencyConditions.put(
+                "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.optifine.MixinChunkVisibility",
+                optifineState != OptifineState.NOT_LOADED);
+        modDependencyConditions.put(
+                "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.IGuiVideoSettings",
+                optifineState == OptifineState.NOT_LOADED);
+
+        //BetterFps FastBeacon Handling
+        boolean enableBetterFpsBeaconFix = false;
+        try{
+            Class betterFpsConditions = Class.forName("guichaguri.betterfps.transformers.Conditions");
+            Method getFixSetting = betterFpsConditions.getMethod("shouldPatch", String.class);
+            boolean betterFpsFastBeaconActive = (boolean) getFixSetting.invoke(null, "fastBeacon");
+            if(betterFpsFastBeaconActive){
+                enableBetterFpsBeaconFix = true;
+                LOGGER.info("BetterFps FastBeacon active, will activate mixin for beacons with FastBeacon.");
+            }else{
+                LOGGER.info("BetterFps is installed, but FastBeacon is not active. Will not enable FastBeacon mixin.");
+            }
+        } catch (ClassNotFoundException e) {
+            LOGGER.info("BetterFps is NOT installed. Will not enable FastBeacon mixin.");
+        } catch (Exception e) {
+            LOGGER.info("Problem trying to detect BetterFps settings. Will not enable FastBeacon mixin.");
+        }
+        modDependencyConditions.put(
+                "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.common.MixinTileEntityBeaconBetterFps", 
+                enableBetterFpsBeaconFix);
+
         File folder = new File(".", "config");
         folder.mkdirs();
         File configFile = new File(folder, "cubicchunks_mixin_config.json");
@@ -164,7 +207,7 @@ public class CubicChunksMixinConfig implements IMixinConfigPlugin {
     public void postApply(String targetClassName, ClassNode targetClass, String mixinClassName, IMixinInfo mixinInfo) {
     }
 
-    public static enum BoolOptions {
+    public enum BoolOptions {
         OPTIMIZE_PATH_NAVIGATOR(false, 
                 new String[] {},
                 new String[] {"io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.common.MixinPathNavigate",
@@ -175,8 +218,9 @@ public class CubicChunksMixinConfig implements IMixinConfigPlugin {
                         + " chunk will not try to seek path to player outside of chunks if direct path is blocked."
                         + " You need to restart Minecraft to apply changes."),
         USE_CUBE_ARRAYS_INSIDE_CHUNK_CACHE(true, 
-                new String[] {},
-                new String[] {"io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.common.MixinWorld_ChunkCache"},
+                new String[] {"io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.MixinChunkCache_Vanilla"},
+                new String[] {"io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.common.MixinChunkCache",
+                        "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.MixinChunkCache_Cubic"},
                 "Enabling this option will mix cube array into chunk cache"
                         + " for using in entity path navigator."
                         + " Potentially this will slightly reduce server tick time"
@@ -184,17 +228,16 @@ public class CubicChunksMixinConfig implements IMixinConfigPlugin {
                         + " You need to restart Minecraft to apply changes."),
         USE_FAST_COLLISION_CHECK(false, 
                 new String[] {"io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.common.MixinWorld_SlowCollisionCheck"},
-                new String[] {"io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.common.MixinWorld_CollisionCheck",
-                        "cubicchunks.asm.mixin.selectable.common.MixinBlock_FastCollision"},
+                new String[] {"io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.common.MixinWorld_CollisionCheck"},
                 "Enabling this option allow using fast collision check."
                         + " Fast collision check can reduce server lag."
-                        + " You need to restart Minecraft to apply changes. DO NOT USE UNTIL FIXED!"),
-        RANDOM_TICK_IN_CUBE(true, 
+                        + " You need to restart Minecraft to apply changes."),
+        VERT_RENDER_DISTANCE(true,
                 new String[] {},
-                new String[] {"io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.common.MixinWorldServer_UpdateBlocks"},
-                "If set to true, random tick wil be launched from cube instance instead of chunk."
-                        + " Cube based random tick may slightly reduce server lag."
-                        + " You need to restart Minecraft to apply changes.");
+                new String[] {"io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.MixinEntityRenderer",
+                        "io.github.opencubicchunks.cubicchunks.core.asm.mixin.selectable.client.MixinRenderGlobal"},
+                "Enabling this option will make the vertical view distance slider affect clientside vertical render distance." +
+                        " When disabled, only serverside load distance is affected.");
 
         private final boolean defaultValue;
         // Load this Mixin class only if option is false.
@@ -275,7 +318,6 @@ public class CubicChunksMixinConfig implements IMixinConfigPlugin {
 
     private enum OptifineState {
         NOT_LOADED,
-        LOADED_C7,
-        LOADED_D1
+        LOADED_E1
     }
 }

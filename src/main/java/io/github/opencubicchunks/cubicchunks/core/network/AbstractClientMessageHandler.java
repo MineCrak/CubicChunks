@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -28,7 +29,6 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraftforge.fml.common.network.simpleimpl.IMessage;
 import net.minecraftforge.fml.common.network.simpleimpl.MessageContext;
 
-import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
 
 @MethodsReturnNonnullByDefault
@@ -37,7 +37,6 @@ public abstract class AbstractClientMessageHandler<T extends IMessage> extends A
 
     // implementing a final version of the server message handler both prevents it from
     // appearing automatically and prevents us from ever accidentally overriding it
-    @Nullable public final IMessage handleServerMessage(EntityPlayer player, T message, MessageContext ctx) {
-        return null;
+    public final void handleServerMessage(EntityPlayer player, T message, MessageContext ctx) {
     }
 }

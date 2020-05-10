@@ -1,7 +1,8 @@
 /*
  *  This file is part of Cubic Chunks Mod, licensed under the MIT License (MIT).
  *
- *  Copyright (c) 2015 contributors
+ *  Copyright (c) 2015-2019 OpenCubicChunks
+ *  Copyright (c) 2015-2019 contributors
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a copy
  *  of this software and associated documentation files (the "Software"), to deal
@@ -27,9 +28,9 @@ import static io.github.opencubicchunks.cubicchunks.api.util.Coords.blockToCube;
 import static io.github.opencubicchunks.cubicchunks.api.util.Coords.cubeToMinBlock;
 
 import io.github.opencubicchunks.cubicchunks.core.world.cube.BlankCube;
+import io.github.opencubicchunks.cubicchunks.api.util.Coords;
 import io.github.opencubicchunks.cubicchunks.api.world.ICube;
 import io.github.opencubicchunks.cubicchunks.api.world.ICubicWorld;
-import io.github.opencubicchunks.cubicchunks.core.world.cube.BlankCube;
 import mcp.MethodsReturnNonnullByDefault;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.entity.Entity;
@@ -37,6 +38,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.EnumSkyBlock;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldProvider;
+import net.minecraft.world.biome.Biome;
 import net.minecraft.world.chunk.Chunk;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -68,11 +70,11 @@ public abstract class MixinWorld_HeightLimits implements ICubicWorld {
 
     @Shadow private int skylightSubtracted;
 
-    @Shadow public boolean isRemote;
+    @Shadow @Final public boolean isRemote;
 
     @Shadow @Final public WorldProvider provider;
 
-    @Shadow public abstract Chunk getChunkFromBlockCoords(BlockPos pos);
+    @Shadow public abstract Chunk getChunk(BlockPos pos);
 
     @Shadow public abstract IBlockState getBlockState(BlockPos pos);
 
@@ -85,6 +87,9 @@ public abstract class MixinWorld_HeightLimits implements ICubicWorld {
     /**
      * This @Overwrite allows World to "see" blocks outside of 0..255 height range.
      *
+     * @param pos block position
+     * @return true if the given position is outside world height range
+     *
      * @author Barteks2x
      * @reason It's very simple method and this seems to be the cleanest way to modify it.
      */
@@ -94,6 +99,9 @@ public abstract class MixinWorld_HeightLimits implements ICubicWorld {
     }
 
     /**
+     * @param pos block positionn
+     * @return light value at the given position
+     *
      * @author Barteks2x
      * @reason Replace {@link World#getLight(BlockPos)} with method that works outside of 0..255 height range. It would
      * be possible to fix it using @Redirect and @ModifyConstant but this way is much cleaner, especially for simple
@@ -114,7 +122,7 @@ public abstract class MixinWorld_HeightLimits implements ICubicWorld {
             return EnumSkyBlock.SKY.defaultLightValue;
             //CubicChunks end
         }
-        return this.getChunkFromBlockCoords(pos).getLightSubtracted(pos, 0);
+        return this.getChunk(pos).getLightSubtracted(pos, 0);
     }
 
     /**
@@ -128,8 +136,7 @@ public abstract class MixinWorld_HeightLimits implements ICubicWorld {
             slice = @Slice(
                     from = @At(value = "INVOKE", target = "Lnet/minecraft/util/math/BlockPos;getY()I"),
                     to = @At(value = "INVOKE",
-                            target = "Lnet/minecraft/world/World;getChunkFromBlockCoords(Lnet/minecraft/util/math/BlockPos;)"
-                                    + "Lnet/minecraft/world/chunk/Chunk;")
+                            target = "Lnet/minecraft/world/World;getChunk(Lnet/minecraft/util/math/BlockPos;)Lnet/minecraft/world/chunk/Chunk;")
             ))
     private int getLightGetYReplace(int zero) {
         return getMinHeight();
@@ -190,6 +197,10 @@ public abstract class MixinWorld_HeightLimits implements ICubicWorld {
     // NOTE: This may break some things
 
     /**
+     * @param pos block position
+     * @param allowEmpty true if client empty cubes should be considered loaded
+     * @param cbi callback info
+     *
      * @author Barteks2x
      * @reason CubicChunks needs to check if cube is loaded instead of chunk
      */
@@ -264,5 +275,35 @@ public abstract class MixinWorld_HeightLimits implements ICubicWorld {
         } else {
             return this.isChunkLoaded(chunkX, chunkZ, allowEmpty);
         }
+    }
+    
+    @Inject(method = "getBiome", at = @At("HEAD"), cancellable = true)
+    public void getBiome(BlockPos pos, CallbackInfoReturnable<Biome> ci) {
+        if (!this.isCubicWorld())
+            return;
+        ICube cube = this.getCubeCache().getLoadedCube(Coords.blockToCube(pos.getX()),Coords.blockToCube(pos.getY()),Coords.blockToCube(pos.getZ()));
+        /*
+         * Using return here function will keep callback not cancelled,
+         * therefore "vanilla" function, which will get biome from chunk, will
+         * be called. Since cube is null there is no way to retrieve chunk
+         * faster, than using vanilla way.
+         */
+        if (cube == null)
+            return;
+        Biome biome = cube.getBiome(pos);
+        ci.setReturnValue(biome);
+        ci.cancel();
+    }
+
+    @ModifyConstant(method = {"canSnowAtBody", "canBlockFreezeBody"}, constant = @Constant(intValue = 256), remap = false)
+    private int canSnowAt_getMaxHeight(int _256) {
+        return getMaxHeight();
+    }
+
+    @ModifyConstant(method = {"canSnowAtBody", "canBlockFreezeBody"},
+            constant = @Constant(expandZeroConditions = Constant.Condition.GREATER_THAN_OR_EQUAL_TO_ZERO),
+            remap = false)
+    private int canSnowAt_getMinHeight(int zero) {
+        return getMinHeight();
     }
 }
